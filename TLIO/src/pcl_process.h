@@ -7,6 +7,7 @@
 
 #include <pcl_conversions/pcl_conversions.h>
 
+
 using namespace std;
 
 typedef pcl::PointXYZINormal PointType;

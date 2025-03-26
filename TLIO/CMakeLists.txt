@@ -81,6 +81,6 @@ catkin_package(
   INCLUDE_DIRS
 )
 
-add_executable(tlio src/tlio.cpp src/pcl_process.cpp)#源文件
+add_executable(tlio src/tlio.cpp include/ikd-Tree/ikd_Tree.cpp src/pcl_process.cpp)#源文件
 target_link_libraries(tlio ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${Sophus_LIBRARIES})#依赖的库
 target_include_directories(tlio PRIVATE ${PYTHON_INCLUDE_DIRS})#头文件
