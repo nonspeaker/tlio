@@ -1,32 +1,9 @@
 #pragma once
 
-#include <cmath>
-#include <math.h>
-#include <deque>
-#include <mutex>
-#include <thread>
-#include <fstream>
-#include <csignal>
-#include <ros/ros.h>
-#include <Eigen/Eigen>
-#include <pcl/common/io.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-#include <condition_variable>
-#include <nav_msgs/Odometry.h>
-#include <pcl/common/transforms.h>
-#include <pcl/kdtree/kdtree_flann.h>
-#include <tf/transform_broadcaster.h>
-#include <eigen_conversions/eigen_msg.h>
-#include <pcl_conversions/pcl_conversions.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <geometry_msgs/Vector3.h>
-
-
+#include "common_lib.hpp"
 #include "esekfom.hpp"
 
-#define MAX_INI_COUNT (10)  //最大迭代次数
+#define MAX_INI_COUNT (10)  //IMU初始化时，需要的IMU数据帧数
 
 class ImuProcessor {
 public:
@@ -34,62 +11,56 @@ public:
     ~ImuProcessor();
 
     void set_params(const V3D &transl, const M3D &rot, const V3D &gyr, const V3D &acc, const V3D &gyr_bias, const V3D &acc_bias);
-    void process(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI::Ptr &pcl_un_);
+    void process(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI::Ptr &pcl_out);
 
-    Eigen::Matrix<double, 12, 12> Q;    //噪声协方差矩阵  对应论文式(8)中的Q
+private:
 
+    bool is_need_init;                  //是否需要初始化
+    vector<Pose6D> imu_pose_deque;      //存储imu位姿(反向传播用) 
+
+    V3D Lidar_T_wrt_IMU;                //Lidar相对于IMU的平移外参
+    M3D Lidar_R_wrt_IMU;                //Lidar相对于IMU的旋转外参
     V3D cov_acc_scale;          //外部传入的初始加速度协方差
     V3D cov_gyr_scale;          //外部传入的初始角速度协方差
-    V3D cov_acc;                //加速度协方差
+
+    Eigen::Matrix<double, 12, 12> Q;    //噪声协方差矩阵  对应论文式(8)中的Q
+    V3D cov_acc;                //加速度协方差  
     V3D cov_gyr;                //角速度协方差
     V3D cov_bias_acc;           //加速度bias的协方差
     V3D cov_bias_gyr;           //角速度bias的协方差
 
-    double first_lidar_time;    //第一帧激光雷达时间戳
-
-
-private:
-
-    sensor_msgs::ImuConstPtr last_imu;  //上一帧的IMU数据
-    vector<Pose6D> imu_pose_deque;      // 存储imu位姿(反向传播用) 
-    V3D Lidar_T_wrt_IMU;                //Lidar相对于IMU的平移外参
-    M3D Lidar_R_wrt_IMU;                //Lidar相对于IMU的旋转外参
-
+    sensor_msgs::ImuConstPtr last_imu;  //上一个imu队列中的IMU数据
+    V3D last_acc;                       //imu队列上一个加速度
+    V3D last_gyr;                       //imu队列上一个角速度
     V3D mean_acc;                       //加速度均值，用于计算方差
     V3D mean_gyr;                       //角速度均值，用于计算方差
-    V3D last_acc;                       //上一帧的加速度
-    V3D last_gyr;                       //上一帧的角速度
 
-    double last_lidar_end_time;          //上一帧结束的时间戳
+    double last_lidar_end_time;         //上一雷达帧结束的时间戳
 
-    int init_iter_num;                  //初始化迭代次数
-    bool is_first_frame;                //是否是第一帧，用于初始化
-    bool is_need_init;                  //是否需要初始化
-
-    void reset();
     void initImu(const MeasureGroup &meas, esekfom::esekf &kf_state, int &N);
-    void undistortPointCloud(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI &pcl_in_out);
+    void undistortPointCloud(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI &pcl_out);
 };
-
 
 const bool time_list(PointType &x, PointType &y) {return (x.curvature < y.curvature);};
 
 ImuProcessor::ImuProcessor()
 {
-    is_first_frame = true;
     is_need_init = true;    
-    init_iter_num = 1;
+
     Q = process_noise_cov();                    //调用use-ikfom.hpp里面的process_noise_cov初始化噪声协方差
     cov_acc = V3D(0.1, 0.1, 0.1);               //加速度协方差初始化
     cov_gyr = V3D(0.1, 0.1, 0.1);               //角速度协方差初始化
     cov_bias_gyr = V3D(0.0001, 0.0001, 0.0001); //角速度bias协方差初始化
     cov_bias_acc = V3D(0.0001, 0.0001, 0.0001); //加速度bias协方差初始化
-    mean_acc = V3D(0, 0, -1.0);
+
+    mean_acc = V3D(0, 0, 0);
     mean_gyr = V3D(0, 0, 0);
+    last_acc = V3D(0, 0, 0);
     last_gyr = V3D(0, 0, 0);
+
     Lidar_T_wrt_IMU = V3D(0, 0, 0);                   // lidar到IMU的位置外参初始化
-    Lidar_R_wrt_IMU = M3D::Identity();                    // lidar到IMU的旋转外参初始化
-    last_imu.reset(new sensor_msgs::Imu());    //上一帧imu初始化
+    Lidar_R_wrt_IMU = M3D::Identity();                // lidar到IMU的旋转外参初始化
+    last_imu.reset(new sensor_msgs::Imu());           //上一帧imu初始化
 }
 
 ImuProcessor::~ImuProcessor() {}
@@ -104,39 +75,12 @@ void ImuProcessor::set_params(const V3D &transl, const M3D &rot, const V3D &gyr,
   cov_bias_gyr = gyr_bias; //角速度bias的协方差
   cov_bias_acc = acc_bias; //加速度bias的协方差
 }
-void ImuProcessor::reset()
-{
-  // ROS_WARN("Reset ImuProcess");
-  is_need_init = true;                   //是否需要初始化imu
-  init_iter_num = 1;                     //初始化迭代次数
-  mean_acc = V3D(0, 0, -1.0);
-  mean_gyr = V3D(0, 0, 0);
-  last_gyr = V3D(0, 0, 0);
 
-  imu_pose_deque.clear();                 // imu位姿清空
-  last_imu.reset(new sensor_msgs::Imu()); //上一帧imu初始化
-
-  //cur_pcl_un_.reset(new PointCloudXYZI()); //当前帧点云未去畸变初始化
-}
-
-//初始化IMU
- //MeasureGroup这个struct表示当前过程中正在处理的所有数据，包含IMU队列和一帧lidar的点云 以及该帧lidar的起始和结束时间
+//初始化IMU：初始化卡尔曼滤波器
  void ImuProcessor::initImu(const MeasureGroup &meas, esekfom::esekf &kf_state, int &N)
  {
-    V3D cur_acc, cur_gyr;
-
-    if(is_first_frame)//
-    {
-        reset();
-        N = 1;
-        is_first_frame = false;
-        
-        const auto &imu_acc = meas.imu.front()->linear_acceleration;//获取IMU的加速度
-        const auto &gyr_acc = meas.imu.front()->angular_velocity;//获取IMU的角速度
-
-        mean_acc << imu_acc.x, imu_acc.y, imu_acc.z;    //初始化加速度均值，用IMU序列中的第一个数据
-        mean_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;    //初始化角速度均值，用IMU序列中的第一个数据
-    }
+    V3D cur_acc;
+    V3D cur_gyr;
 
     for (const auto &imu : meas.imu)
     {
@@ -239,10 +183,9 @@ void ImuProcessor::undistortPointCloud(const MeasureGroup &meas, esekfom::esekf 
 
         last_gyr = V3D(tail->angular_velocity.x, tail->angular_velocity.y, tail->angular_velocity.z) - imu_state.bg;
         //更新imu上一帧的加速度 = R*(加速度-bias) - g
-        last_acc  = V3D(tail->linear_acceleration.x, tail->linear_acceleration.y, tail->linear_acceleration.z) * G_m_s2 / mean_acc.norm();  
+        last_acc = V3D(tail->linear_acceleration.x, tail->linear_acceleration.y, tail->linear_acceleration.z) * G_m_s2 / mean_acc.norm();  
         last_acc = imu_state.rot * (last_acc - imu_state.ba) + imu_state.grav;
  
-
         double &&offs_t = tail->header.stamp.toSec() - pcl_beg_time;    //后一个IMU时刻距离此次雷达开始的时间间隔
         imu_pose_deque.push_back( set_pose6d( offs_t, last_acc, last_gyr, imu_state.vel, imu_state.pos, imu_state.rot.matrix() ) );
 
@@ -300,7 +243,7 @@ void ImuProcessor::undistortPointCloud(const MeasureGroup &meas, esekfom::esekf 
 
 }
 
-void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI::Ptr &pcl_un_)
+void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI::Ptr &pcl_out)
 {
     if(meas.imu.empty()) 
         return;
@@ -308,25 +251,22 @@ void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, P
 
     if(is_need_init)
     {
-        initImu(meas, kf_state, init_iter_num);
+        int N = 1;
+        initImu(meas, kf_state, N);
 
-        last_imu = meas.imu.back();
-
-        state_ikfom imu_state = kf_state.get_x();
-
-        if(init_iter_num > MAX_INI_COUNT)
+        if(N > MAX_INI_COUNT)
         {
-            //cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2); //源代码这里有问题，cov_acc被覆盖了
             is_need_init = false;
 
-            cov_acc = cov_acc_scale;
-            cov_gyr = cov_gyr_scale;
+            //使用外部设置的参数作为初始化的协方差
+            //cov_acc = cov_acc_scale;
+            //cov_gyr = cov_gyr_scale;
             ROS_INFO("IMU Initial Done");
 
         }
         return;
     }
 
-    undistortPointCloud(meas, kf_state, *pcl_un_);
+    undistortPointCloud(meas, kf_state, *pcl_out);
 
 }   

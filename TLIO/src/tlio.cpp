@@ -34,108 +34,110 @@
 
 using namespace std;
 
-int NUM_MAX_ITERATIONS = 4;
+enum LID_TYPE
+{
+  AVIA = 1,
+  VELO16,
+  OUST64,
+  RS32
+}; //{1, 2, 3, 4}
+enum TIME_UNIT
+{
+  SEC = 0,
+  MS = 1,
+  US = 2,
+  NS = 3
+};
 
-V3D Lidar_T_wrt_IMU(Zero3d);
-M3D Lidar_R_wrt_IMU(Eye3d);
+bool path_en = true;
+bool scan_pub_en = true;
+bool dense_pub_en = true;
+bool scan_body_pub_en = true;
+
+int NUM_MAX_ITERATIONS = 4;
+string map_file_path = "";
+
+string lid_topic = "/livox/lidar";
+string imu_topic = "/livox/imu";
+bool time_sync_en = false;
+double time_offset_lidar_to_imu = 0.0;//lidar相对于imu时间偏移，配置参数
+
+double filter_size_corner_min = 0.5;
+double filter_size_surf_min = 0.5;
+double filter_size_map_min = 0.5;
+double cube_len = 200;
+
+float DET_RANGE = 300.0f;
+double fov_deg = 360;
 double gyr_cov = 0.1;
 double acc_cov = 0.1;
 double b_gyr_cov = 0.0001;
 double b_acc_cov = 0.0001;
-
 vector<double> extrinT = vector<double>{-0.011, -0.02329, 0.04412};
 vector<double> extrinR = vector<double>{1, 0, 0, 0, 1, 0, 0, 0, 1};
+bool extrinsic_est_en = true;
 
-double filter_size_surf_min = 0.5;
-double filter_size_map_min = 0.5;
+double blind = 0.01;
+int lidar_type = AVIA;
+int timestamp_unit = US;
+int N_SCANS = 16;
+int SCAN_RATE = 10;
 
+int point_filter_num = 2;
+bool feature_extracted_enable = false;
 
-mutex mtx_buffer;
-condition_variable sig_buffer;
-
-
-double time_offset_lidar_to_imu = 0.0;//lidar相对于imu时间偏移，配置参数
-
-std::shared_ptr<PointCloudProcessor> pclProcessor(new PointCloudProcessor());
+bool pcd_save_en = true;
+int pcd_save_interval = -1;
 
 bool timediff_set_flg = false;
 double timediff_lidar_to_imu = 0.0;
 double last_timestamp_lidar = 0.0;
 double last_timestamp_imu = -1.0;
 
+
+
+mutex mtx_buffer;
+condition_variable sig_buffer;
 std::deque<PointCloudXYZI::Ptr> lidar_buffer;
 std::deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
 std::deque<double> time_buffer;
-
-
-ros::Publisher pub_pcl;
-ros::Publisher pub_imu;
-
-
-
+std::shared_ptr<PointCloudProcessor> pclProcessor(new PointCloudProcessor());
 bool lidar_pushed;
 double lidar_end_time = 0.0;
 double lidar_mean_scan_time = 0.1; //用于同步
 
-
 bool is_first_scan = true;
 bool is_ekf_init = false;
 double first_lidar_time = 0.0;
-
+int feats_down_size = 0;
+pcl::VoxelGrid<PointType> downSizeFilterSurf;
 MeasureGroup Measures;//当前雷达测量数据包
 esekfom::esekf kf;//卡尔曼滤波器状态
 state_ikfom state_point;//当前状态
 Eigen::Vector3d lidar_position;//当前雷达位置
-
-
 PointCloudXYZI::Ptr featsFromMap(new PointCloudXYZI());//地图中的特征点点云
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());//当前帧去畸变后的点云
-PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云
+PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云pcd_index
 PointCloudXYZI::Ptr feats_down_world(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云（世界坐标系）
-PointCloudXYZI::Ptr normvec(new PointCloudXYZI(100000, 1));//存储法向量
-PointCloudXYZI::Ptr laserCloudOri(new PointCloudXYZI(100000, 1));//存储原始点云
-PointCloudXYZI::Ptr corr_normvect(new PointCloudXYZI(100000, 1));//校正后的法向量
-PointCloudXYZI::Ptr _featsArray;
+PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
 
-
-int feats_down_size = 0;
-pcl::VoxelGrid<PointType> downSizeFilterSurf;
 KD_TREE<PointType> ikdtree;
-
-V3D cur_euler;
-
-
-double cube_len = 0.0;
-
-nav_msgs::Path path;//lidar移动路径信息的消息
-nav_msgs::Odometry odomAftMapped;//建图后里程计的消息
-geometry_msgs::Quaternion geoQuat;//集合四元数消息，表示旋转
-geometry_msgs::PoseStamped msg_body_pose;//机体位姿及其时间戳的消息
-
+int kdtree_delete_counter = 0;
+bool is_localmap_init = false;
+const float MOV_THRESHOLD = 1.5f;
+BoxPointType localmap_range;
 vector<BoxPointType> cub_needrm;
 vector<PointVector>  Nearest_Points; 
 
-int kdtree_delete_counter = 0;
-int kdtree_delete_time = 0.0;
 
-bool is_localmap_init = false;
-BoxPointType localmap_range;
+nav_msgs::Path path;//lidar移动路径信息的消息
+nav_msgs::Odometry odomAftMapped;//建图后里程计的消息
+geometry_msgs::PoseStamped msg_body_pose;//机体位姿及其时间戳的消息
 
-float DET_RANGE = 300.0f;
-const float MOV_THRESHOLD = 1.5f;
+
 
 bool flg_exit = false;
-
-PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI(500000, 1));
-PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
-bool scan_pub_en = true, dense_pub_en = true, scan_body_pub_en = true;
-bool pcd_save_en = true, time_sync_en = false, extrinsic_est_en = true, path_en = true;
-int pcd_save_interval = -1 ,pcd_index = 0;
-
-/**
- * 信号处理函数，用于捕获退出信号
- * @param sig 信号编号
- */
+//信号处理函数，用于捕获退出信号  @param sig 信号编号
 void SigHandle(int sig)
 {
     flg_exit = true;
@@ -165,8 +167,6 @@ void pointBodyToWorld(const Matrix<T, 3, 1> &pi, Matrix<T, 3, 1> &po)
     po[1] = p_global(1);
     po[2] = p_global(2);
 }
-
-
 
 void livox_pcl_cbk(const livox_ros_driver2::CustomMsg::ConstPtr &msg)
 {
@@ -233,8 +233,6 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
  * @param meas 测量组
  * @return 是否成功同步
  */
-
-
 int scan_num = 0;
 bool sync_packages(MeasureGroup &meas)
 {
@@ -344,7 +342,6 @@ void lasermap_fov_segment()
 
 }
 
-
 //增量更新地图
 void map_incremental()
 {
@@ -394,7 +391,7 @@ void map_incremental()
 }
 
 
-
+//发布消息
 void RGBpointBodyLidarToIMU(PointType const *const pi, PointType *const po)
 {
     V3D p_body_lidar(pi->x, pi->y, pi->z);
@@ -406,7 +403,7 @@ void RGBpointBodyLidarToIMU(PointType const *const pi, PointType *const po)
     po->intensity = pi->intensity;
 }
 
-
+int pcd_index = 0;
 void publish_frame_world(const ros::Publisher &pubLaserCloudFull_)
 {
     if (scan_pub_en)
@@ -552,47 +549,16 @@ void publish_map(const ros::Publisher &pubLaserCloudMap)
     laserCloudMap.header.frame_id = "camera_init";
     pubLaserCloudMap.publish(laserCloudMap);
 }
+
+
+
+
+
 int main(int argc, char** argv) 
 {
     ros::init(argc, argv, "tlio");
     ros::NodeHandle nh;
-    /*
-    nh.param<bool>("publish/path_en", path_en, true);
-    nh.param<bool>("publish/scan_publish_en", scan_pub_en, true);            // 是否发布当前正在扫描的点云的topic
-    nh.param<bool>("publish/dense_publish_en", dense_pub_en, true);          // 是否发布经过运动畸变校正注册到IMU坐标系的点云的topic
-    nh.param<bool>("publish/scan_bodyframe_pub_en", scan_body_pub_en, true); // 是否发布经过运动畸变校正注册到IMU坐标系的点云的topic，需要该变量和上一个变量同时为true才发布
-    nh.param<int>("max_iteration", NUM_MAX_ITERATIONS, 4);                   // 卡尔曼滤波的最大迭代次数
-    nh.param<string>("map_file_path", map_file_path, "");                    // 地图保存路径
-    nh.param<string>("common/lid_topic", lid_topic, "/livox/lidar");         // 雷达点云topic名称
-    nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");           // IMU的topic名称
-    nh.param<bool>("common/time_sync_en", time_sync_en, false);              // 是否需要时间同步，只有当外部未进行时间同步时设为true
-    nh.param<double>("common/time_offset_lidar_to_imu", time_diff_lidar_to_imu, 0.0);
-    nh.param<double>("filter_size_corner", filter_size_corner_min, 0.5); // VoxelGrid降采样时的体素大小
-    nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);
-    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);
-    nh.param<double>("cube_side_length", cube_len, 200);    // 地图的局部区域的长度（FastLio2论文中有解释）
-    nh.param<float>("mapping/det_range", DET_RANGE, 300.f); // 激光雷达的最大探测范围
-    nh.param<double>("mapping/fov_degree", fov_deg, 180);
-    nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);               // IMU陀螺仪的协方差
-    nh.param<double>("mapping/acc_cov", acc_cov, 0.1);               // IMU加速度计的协方差
-    nh.param<double>("mapping/b_gyr_cov", b_gyr_cov, 0.0001);        // IMU陀螺仪偏置的协方差
-    nh.param<double>("mapping/b_acc_cov", b_acc_cov, 0.0001);        // IMU加速度计偏置的协方差
-    nh.param<double>("preprocess/blind", p_pre->blind, 0.01);        // 最小距离阈值，即过滤掉0～blind范围内的点云
-    nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, AVIA); // 激光雷达的类型
-    nh.param<int>("preprocess/scan_line", p_pre->N_SCANS, 16);       // 激光雷达扫描的线数（livox avia为6线）
-    nh.param<int>("preprocess/timestamp_unit", p_pre->time_unit, US);
-    nh.param<int>("preprocess/scan_rate", p_pre->SCAN_RATE, 10);
-    nh.param<int>("point_filter_num", p_pre->point_filter_num, 2);           // 采样间隔，即每隔point_filter_num个点取1个点
-    nh.param<bool>("feature_extract_enable", p_pre->feature_enabled, false); // 是否提取特征点（FAST_LIO2默认不进行特征点提取）
-    nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
-    nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false); // 是否将点云地图保存到PCD文件
-    nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
-    nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>()); // 雷达相对于IMU的外参T（即雷达在IMU坐标系中的坐标）
-    nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>()); // 雷达相对于IMU的外参R
 
-    cout << "Lidar_type: " << p_pre->lidar_type << endl;
-    */
-    // 初始化path的header（包括时间戳和帧id），path用于保存odemetry的路径
     path.header.stamp = ros::Time::now();
     path.header.frame_id = "camera_init";
 
@@ -608,11 +574,14 @@ int main(int argc, char** argv)
 
     downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
 
+    V3D Lidar_T_wrt_IMU(Zero3d);
+    M3D Lidar_R_wrt_IMU(Eye3d);
     std::shared_ptr<ImuProcessor> imuProcessor(new ImuProcessor());
     Lidar_T_wrt_IMU << VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU << MAT_FROM_ARRAY(extrinR);
     imuProcessor->set_params(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU, V3D(gyr_cov, gyr_cov, gyr_cov), V3D(acc_cov, acc_cov, acc_cov),
                       V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov), V3D(b_acc_cov, b_acc_cov, b_acc_cov));
+
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);//一秒执行5000次
 
@@ -627,7 +596,6 @@ int main(int argc, char** argv)
             if(is_first_scan)
             {
                 first_lidar_time = Measures.lidar_beg_time;
-                imuProcessor->first_lidar_time = first_lidar_time;
                 is_first_scan = false;
                 continue;
             }       
