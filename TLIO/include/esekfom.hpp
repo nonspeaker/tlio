@@ -96,7 +96,7 @@ namespace esekfom
 
 		//计算每个特征点的残差及H矩阵
 		void h_share_model(dyn_share_datastruct &ekfom_data, PointCloudXYZI::Ptr &feats_down_body,
-						   KD_TREE<PointType> &ikdtree, vector<PointVector> &Nearest_Points, bool extrinsic_est)
+						   KD_TREE &ikdtree, vector<PointVector> &Nearest_Points, bool extrinsic_est)
 		{
 			int feats_down_size = feats_down_body->points.size();
 			laserCloudOri->clear();
@@ -228,7 +228,7 @@ namespace esekfom
 
 		// ESKF
 		void update_iterated_dyn_share_modified(double R, PointCloudXYZI::Ptr &feats_down_body,
-												KD_TREE<PointType> &ikdtree, vector<PointVector> &Nearest_Points, int maximum_iter, bool extrinsic_est)
+												KD_TREE &ikdtree, vector<PointVector> &Nearest_Points, int maximum_iter, bool extrinsic_est)
 		{
 			normvec->resize(int(feats_down_body->points.size()));
 

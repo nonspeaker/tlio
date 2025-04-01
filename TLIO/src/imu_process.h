@@ -104,7 +104,7 @@ void ImuProcessor::set_params(const V3D &transl, const M3D &rot, const V3D &gyr,
     init_state.bg = mean_gyr;                                   //角速度偏置（测量的平均角速度）
     init_state.offset_T_L_I = Lidar_T_wrt_IMU;                  //Lidar相对于IMU的平移外参
     init_state.offset_R_L_I = Sophus::SO3(Lidar_R_wrt_IMU);     //Lidar相对于IMU的旋转外参
-    kf_state.change_x(init_state);                                 //将初始化后的状态量赋值给卡尔曼滤波器
+    kf_state.change_x(init_state);                              //将初始化后的状态量赋值给卡尔曼滤波器
 
     Eigen::Matrix<double, 24, 24> init_P = Eigen::MatrixXd::Identity(24, 24);  //初始化协方差矩阵
     init_P(6,6) = init_P(7,7) = init_P(8,8) = 0.00001;

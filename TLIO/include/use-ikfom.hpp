@@ -17,22 +17,22 @@
 //24维的状态量x
 struct state_ikfom
 {
-	Eigen::Vector3d pos = Eigen::Vector3d(0,0,0);
-	Sophus::SO3 rot = Sophus::SO3(Eigen::Matrix3d::Identity());
-	Sophus::SO3 offset_R_L_I = Sophus::SO3(Eigen::Matrix3d::Identity());
-	Eigen::Vector3d offset_T_L_I = Eigen::Vector3d(0,0,0);
-	Eigen::Vector3d vel = Eigen::Vector3d(0,0,0);
-	Eigen::Vector3d bg = Eigen::Vector3d(0,0,0);
-	Eigen::Vector3d ba = Eigen::Vector3d(0,0,0);
-	Eigen::Vector3d grav = Eigen::Vector3d(0,0,-G_m_s2);
+	Eigen::Vector3d pos = Eigen::Vector3d(0,0,0); //位置
+	Sophus::SO3 rot = Sophus::SO3(Eigen::Matrix3d::Identity()); //旋转矩阵
+	Sophus::SO3 offset_R_L_I = Sophus::SO3(Eigen::Matrix3d::Identity()); //lidar到IMU的旋转外参偏置
+	Eigen::Vector3d offset_T_L_I = Eigen::Vector3d(0,0,0); //lidar到IMU的平移外参偏置
+	Eigen::Vector3d vel = Eigen::Vector3d(0,0,0); //速度
+	Eigen::Vector3d bg = Eigen::Vector3d(0,0,0); //角速度偏置
+	Eigen::Vector3d ba = Eigen::Vector3d(0,0,0); //加速度偏置
+	Eigen::Vector3d grav = Eigen::Vector3d(0,0,-G_m_s2); //重力加速度
 };
 
 
-//输入u
+//输入u，测量量
 struct input_ikfom
 {
-	Eigen::Vector3d acc = Eigen::Vector3d(0,0,0);
-	Eigen::Vector3d gyro = Eigen::Vector3d(0,0,0);
+	Eigen::Vector3d acc = Eigen::Vector3d(0,0,0); //加速度
+	Eigen::Vector3d gyro = Eigen::Vector3d(0,0,0); //角速度
 };
 
 
