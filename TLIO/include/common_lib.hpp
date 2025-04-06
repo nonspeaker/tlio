@@ -13,6 +13,9 @@
 using namespace std;
 using namespace Eigen;
 
+#define INIT_TIME           (0.1)
+#define LASER_POINT_COV     (0.001)
+
 #define PI_M (3.14159265358)
 #define G_m_s2 (9.81)               // Gravaty const in GuangDong/China
 #define NUM_MATCH_POINTS    (5)     
@@ -21,6 +24,14 @@ using namespace Eigen;
 #define MAT_FROM_ARRAY(v)        v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8]
 #define SKEW_SYM_MATRX(v)        0.0,-v[2],v[1],v[2],0.0,-v[0],-v[1],v[0],0.0
 #define DEBUG_FILE_DIR(name)     (string(string(ROOT_DIR) + "Log/"+ name))
+
+enum LID_TYPE
+{
+  AVIA = 1,
+  VELO16,
+  OUST64,
+  RS32
+}; //{1, 2, 3, 4}
 
 typedef tlio::Pose6D Pose6D;
 typedef pcl::PointXYZINormal PointType;

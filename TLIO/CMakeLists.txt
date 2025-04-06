@@ -91,8 +91,7 @@ catkin_package(
 )
 
 add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
-add_library(preprocess  src/pcl_process.cpp)
 add_executable(tlio src/tlio.cpp)
-target_link_libraries(tlio ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${Sophus_LIBRARIES} ${GeographicLib_LIBRARIES} ikd_Tree preprocess gtsam) 
+target_link_libraries(tlio ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${Sophus_LIBRARIES} ${GeographicLib_LIBRARIES} ikd_Tree gtsam) 
 target_include_directories(tlio PRIVATE ${PYTHON_INCLUDE_DIRS})
 

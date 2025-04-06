@@ -1,36 +1,24 @@
 #ifndef OPTIMIZATION_H
 #define OPTIMIZATION_H
 
-#include <omp.h>
-#include <mutex>
-#include <math.h>
-#include <thread>
-#include <fstream>
-#include <csignal>
-#include <unistd.h>
 #include <ros/ros.h>
 #include <Eigen/Dense>
-
-
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/filters/voxel_grid.h>
+#include <pcl/registration/icp.h>
 
-// gstam
+// GTSAM
 #include <gtsam/geometry/Rot3.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <gtsam/slam/BetweenFactor.h>
-#include <gtsam/navigation/GPSFactor.h>
-#include <gtsam/navigation/ImuFactor.h>
-#include <gtsam/navigation/CombinedImuFactor.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
-#include <gtsam/nonlinear/Marginals.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/nonlinear/ISAM2.h>
 
+// 自定义头文件
 #include "pcl_process.h"
 #include "esekfom.hpp"
 using namespace std;
@@ -171,6 +159,7 @@ public:
     void setTimeStamp(double &time);
     bool detectLoopClosureDistance(int &latestID, int &closestID);
     void loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKeyframes, const int &key, const int &searchNum);
+    void generateLoopMarkers(visualization_msgs::MarkerArray &markerArray, double &lidar_end_time);
     void performLoopClosure();
 
     bool loopClosureEnableFlag;                 //回环检测模块使能标志
@@ -299,6 +288,68 @@ void LoopClosure::loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKey
     downSizeFilterICP.setInputCloud(nearKeyframes);
     downSizeFilterICP.filter(*cloud_temp);
     *nearKeyframes = *cloud_temp;
+}
+
+void LoopClosure::generateLoopMarkers(visualization_msgs::MarkerArray &markerArray, double &lidar_end_time)
+{
+    if(loopIndexContainer.empty())
+        return;
+    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time);
+    std::string odometryFrame = "camera_init";
+
+    // 闭环顶点
+    visualization_msgs::Marker markerNode;
+    markerNode.header.frame_id = odometryFrame;
+    markerNode.header.stamp = timeLaserInfoStamp;
+    markerNode.action = visualization_msgs::Marker::ADD;
+    markerNode.type = visualization_msgs::Marker::SPHERE_LIST;
+    markerNode.ns = "loop_nodes";
+    markerNode.id = 0;
+    markerNode.pose.orientation.w = 1;
+    markerNode.scale.x = 0.3;
+    markerNode.scale.y = 0.3;
+    markerNode.scale.z = 0.3;
+    markerNode.color.r = 0;
+    markerNode.color.g = 0.8;
+    markerNode.color.b = 1;
+    markerNode.color.a = 1;
+
+    // 闭环边
+    visualization_msgs::Marker markerEdge;
+    markerEdge.header.frame_id = odometryFrame;
+    markerEdge.header.stamp = timeLaserInfoStamp;
+    markerEdge.action = visualization_msgs::Marker::ADD;
+    markerEdge.type = visualization_msgs::Marker::LINE_LIST;
+    markerEdge.ns = "loop_edges";
+    markerEdge.id = 1;
+    markerEdge.pose.orientation.w = 1;
+    markerEdge.scale.x = 0.1;
+    markerEdge.color.r = 0.9;
+    markerEdge.color.g = 0.9;
+    markerEdge.color.b = 0;
+    markerEdge.color.a = 1;
+
+    // 遍历闭环
+    for (auto it = loopIndexContainer.begin(); it != loopIndexContainer.end(); ++it) {
+        int key_cur = it->first;
+        int key_pre = it->second;
+
+        geometry_msgs::Point p;
+        p.x = cloudKeyPoses6D->points[key_cur].x;
+        p.y = cloudKeyPoses6D->points[key_cur].y;
+        p.z = cloudKeyPoses6D->points[key_cur].z;
+        markerNode.points.push_back(p);
+        markerEdge.points.push_back(p);
+
+        p.x = cloudKeyPoses6D->points[key_pre].x;
+        p.y = cloudKeyPoses6D->points[key_pre].y;
+        p.z = cloudKeyPoses6D->points[key_pre].z;
+        markerNode.points.push_back(p);
+        markerEdge.points.push_back(p);
+    }
+
+    markerArray.markers.push_back(markerNode);
+    markerArray.markers.push_back(markerEdge);   
 }
 
 void LoopClosure::performLoopClosure()
