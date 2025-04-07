@@ -128,6 +128,7 @@ int feats_down_size = 0;
 MeasureGroup Measures;//当前雷达测量数据包
 esekfom::esekf kf;//卡尔曼滤波器状态
 state_ikfom state_point;//当前状态
+Eigen::Matrix<double, 24, 24>  P; //协方差矩阵
 Eigen::Vector3d lidar_position;//当前雷达位置
 
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());//当前帧去畸变后的点云
@@ -146,8 +147,8 @@ std::vector<PointVector> Nearest_Points;
 
 nav_msgs::Path path;//lidar移动路径信息的消息
 nav_msgs::Path globalPath; //优化后的全局路径
-nav_msgs::Odometry odomAftMapped;//建图后里程计的消息
-visualization_msgs::MarkerArray markerArray;
+nav_msgs::Odometry odometry;//建图后里程计的消息
+visualization_msgs::MarkerArray markerArray;//回环检测约束
 
 bool flg_exit = false;
 //信号处理函数，用于捕获退出信号  @param sig 信号编号
@@ -336,21 +337,24 @@ int main(int argc, char** argv)
             //迭代状态估计
             Nearest_Points.resize(feats_down_size); //存储近邻点的vector
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, feats_down_lidar, ikdtree, Nearest_Points, max_iteration, extrinsic_est_en);
-            state_point = kf.get_x();
-
 
            //更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
+            state_point = kf.get_x();
             Eigen::Vector3d eulerAngle = state_point.rot.matrix().eulerAngles(2,1,0); 
             gtsamOptimizer->setInitialPose(eulerAngle,state_point.pos, lidar_end_time);
             gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
  
-
+            state_point = kf.get_x();
             //向地图k-d树里添加点云
             feats_down_world->resize(feats_down_size);
             pclProcessor->updateMapIncremental(feats_down_lidar, feats_down_world, ikdtree, Nearest_Points, state_point);
 
+            //发布里程计信息
+            P = kf.get_P();
+            publisher.publishOdometry(odometry,state_point, P, lidar_end_time);
+            //发布路径
             publisher.publishPath(path, state_point, lidar_end_time);
-
+            //地图点云
             pclProcessor->transformToWorld(feats_undistort, feats_publish, state_point);
             pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_size_map_min);
             publisher.publishPointCloud(feats_publish, lidar_end_time);

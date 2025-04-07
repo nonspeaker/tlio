@@ -14,13 +14,15 @@ class MessagePublisher {
 public:
     MessagePublisher(ros::NodeHandle &nh);
 
+    void publishOdometry(nav_msgs::Odometry& odometry , const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp);
     void publishPointCloud(const PointCloudXYZI::Ptr &cloud, double timestamp);
     void publishPath(nav_msgs::Path &path, const state_ikfom& state, double timestamp);
     void publishLoopConstraints(const visualization_msgs::MarkerArray &markerArray);
 
+
 private:
+    ros::Publisher pubOdometry;
     ros::Publisher pubPointCloudWorld;
-    ros::Publisher pubOdomAftMapped;
     ros::Publisher pubPath;
     ros::Publisher pubPathUpdate;
     ros::Publisher pubLoopConstraintEdge;
@@ -28,12 +30,52 @@ private:
 
 
 MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
+    pubOdometry = nh.advertise<nav_msgs::Odometry>("/odometry", 100000);
     pubPointCloudWorld = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
-    pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/Odometry", 100000);
     pubPath = nh.advertise<nav_msgs::Path>("/path", 100000);
-    pubPathUpdate = nh.advertise<nav_msgs::Path>("fast_lio_sam/path_update", 100000);
-    pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("/fast_lio_sam/mapping/loop_closure_constraints", 1);
+    pubPathUpdate = nh.advertise<nav_msgs::Path>("path_update", 100000);
+    pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("loop_closure_constraints", 1);
 }
+
+void MessagePublisher::publishOdometry(nav_msgs::Odometry& odometry , const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp)
+{
+    odometry.header.frame_id = "camera_init";
+    odometry.child_frame_id = "lidar";
+    odometry.header.stamp = ros::Time().fromSec(timestamp); // ros::Time().fromSec(lidar_end_time);
+    odometry.pose.pose.position.x = state.pos(0);
+    odometry.pose.pose.position.y = state.pos(1);
+    odometry.pose.pose.position.z = state.pos(2);
+
+    auto q_ = Eigen::Quaterniond(state.rot.matrix());
+    odometry.pose.pose.orientation.x = q_.coeffs()[0];
+    odometry.pose.pose.orientation.y = q_.coeffs()[1];
+    odometry.pose.pose.orientation.z = q_.coeffs()[2];
+    odometry.pose.pose.orientation.w = q_.coeffs()[3];
+
+    pubOdometry.publish(odometry);
+    for (int i = 0; i < 6; i++)
+    {
+        int k = i < 3 ? i + 3 : i - 3;
+        odometry.pose.covariance[i * 6 + 0] = P(k, 3);
+        odometry.pose.covariance[i * 6 + 1] = P(k, 4);
+        odometry.pose.covariance[i * 6 + 2] = P(k, 5);
+        odometry.pose.covariance[i * 6 + 3] = P(k, 0);
+        odometry.pose.covariance[i * 6 + 4] = P(k, 1);
+        odometry.pose.covariance[i * 6 + 5] = P(k, 2);
+    }
+
+    static tf::TransformBroadcaster br;
+    tf::Transform transform;
+    tf::Quaternion q;
+    transform.setOrigin(tf::Vector3(odometry.pose.pose.position.x, odometry.pose.pose.position.y, odometry.pose.pose.position.z));
+    q.setW(odometry.pose.pose.orientation.w);
+    q.setX(odometry.pose.pose.orientation.x);
+    q.setY(odometry.pose.pose.orientation.y);
+    q.setZ(odometry.pose.pose.orientation.z);
+    transform.setRotation(q);
+    br.sendTransform(tf::StampedTransform(transform, odometry.header.stamp, "camera_init", "lidar"));
+}
+
 
 void MessagePublisher::publishPointCloud(const PointCloudXYZI::Ptr &cloud, double timestamp) {
     sensor_msgs::PointCloud2 cloudMsg;
@@ -72,3 +114,5 @@ void MessagePublisher::publishPath(nav_msgs::Path &path, const state_ikfom& stat
 void MessagePublisher::publishLoopConstraints(const visualization_msgs::MarkerArray &markerArray) {
     pubLoopConstraintEdge.publish(markerArray);
 }
+
+

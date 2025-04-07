@@ -190,7 +190,7 @@ Visualization Manager:
             Shaft Length: 0.05000000074505806
             Shaft Radius: 0.05000000074505806
             Value: Axes
-          Topic: /Odometry
+          Topic: /odometry
           Unreliable: false
           Value: true
       Enabled: true
@@ -336,7 +336,7 @@ Visualization Manager:
       Value: false
     - Class: rviz/MarkerArray
       Enabled: true
-      Marker Topic: /fast_lio_sam/mapping/loop_closure_constraints
+      Marker Topic: /loop_closure_constraints
       Name: loop_clousre
       Namespaces:
         {}
