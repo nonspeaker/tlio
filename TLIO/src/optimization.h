@@ -157,6 +157,7 @@ public:
     ~LoopClosure();
 
     void setTimeStamp(double &time);
+    void setParams(bool enableFlag, float loopClosureFreq, float searchRadius, float searchTimeDiff, int searchNum, float fitnessScore);
     bool detectLoopClosureDistance(int &latestID, int &closestID);
     void loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKeyframes, const int &key, const int &searchNum);
     void generateLoopMarkers(visualization_msgs::MarkerArray &markerArray, double &lidar_end_time);
@@ -228,10 +229,19 @@ void LoopClosure::setTimeStamp(double &time)
 {
     lidar_end_time = time;
 }
-//回环检测三大要素
-// 1.设置最小时间差，太近没必要
-// 2.控制回环的频率，避免频繁检测，每检测一次，就做一次等待
-// 3.根据当前最小距离重新计算等待时间
+
+void LoopClosure::setParams(bool enableFlag, float loopClosureFreq, float searchRadius, float searchTimeDiff, int searchNum, float fitnessScore) {
+    loopClosureEnableFlag = enableFlag;
+    loopClosureFrequency = loopClosureFreq;
+    historyKeyframeSearchRadius = searchRadius;
+    historyKeyframeSearchTimeDiff = searchTimeDiff;
+    historyKeyframeSearchNum = searchNum;
+    historyKeyframeFitnessScore = fitnessScore;
+
+}
+
+
+
 bool LoopClosure::detectLoopClosureDistance(int &latestID, int &closestID)
 {
     // 当前关键帧帧
@@ -264,6 +274,7 @@ bool LoopClosure::detectLoopClosureDistance(int &latestID, int &closestID)
     ROS_INFO("Find loop clousre frame ");
     return true;
 }
+
 //提取key索引的关键帧前后相邻若干帧的关键帧特征点集合，降采样
 void LoopClosure::loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKeyframes, const int &key, const int &searchNum)
 {
@@ -288,68 +299,6 @@ void LoopClosure::loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKey
     downSizeFilterICP.setInputCloud(nearKeyframes);
     downSizeFilterICP.filter(*cloud_temp);
     *nearKeyframes = *cloud_temp;
-}
-
-void LoopClosure::generateLoopMarkers(visualization_msgs::MarkerArray &markerArray, double &lidar_end_time)
-{
-    if(loopIndexContainer.empty())
-        return;
-    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time);
-    std::string odometryFrame = "camera_init";
-
-    // 闭环顶点
-    visualization_msgs::Marker markerNode;
-    markerNode.header.frame_id = odometryFrame;
-    markerNode.header.stamp = timeLaserInfoStamp;
-    markerNode.action = visualization_msgs::Marker::ADD;
-    markerNode.type = visualization_msgs::Marker::SPHERE_LIST;
-    markerNode.ns = "loop_nodes";
-    markerNode.id = 0;
-    markerNode.pose.orientation.w = 1;
-    markerNode.scale.x = 0.3;
-    markerNode.scale.y = 0.3;
-    markerNode.scale.z = 0.3;
-    markerNode.color.r = 0;
-    markerNode.color.g = 0.8;
-    markerNode.color.b = 1;
-    markerNode.color.a = 1;
-
-    // 闭环边
-    visualization_msgs::Marker markerEdge;
-    markerEdge.header.frame_id = odometryFrame;
-    markerEdge.header.stamp = timeLaserInfoStamp;
-    markerEdge.action = visualization_msgs::Marker::ADD;
-    markerEdge.type = visualization_msgs::Marker::LINE_LIST;
-    markerEdge.ns = "loop_edges";
-    markerEdge.id = 1;
-    markerEdge.pose.orientation.w = 1;
-    markerEdge.scale.x = 0.1;
-    markerEdge.color.r = 0.9;
-    markerEdge.color.g = 0.9;
-    markerEdge.color.b = 0;
-    markerEdge.color.a = 1;
-
-    // 遍历闭环
-    for (auto it = loopIndexContainer.begin(); it != loopIndexContainer.end(); ++it) {
-        int key_cur = it->first;
-        int key_pre = it->second;
-
-        geometry_msgs::Point p;
-        p.x = cloudKeyPoses6D->points[key_cur].x;
-        p.y = cloudKeyPoses6D->points[key_cur].y;
-        p.z = cloudKeyPoses6D->points[key_cur].z;
-        markerNode.points.push_back(p);
-        markerEdge.points.push_back(p);
-
-        p.x = cloudKeyPoses6D->points[key_pre].x;
-        p.y = cloudKeyPoses6D->points[key_pre].y;
-        p.z = cloudKeyPoses6D->points[key_pre].z;
-        markerNode.points.push_back(p);
-        markerEdge.points.push_back(p);
-    }
-
-    markerArray.markers.push_back(markerNode);
-    markerArray.markers.push_back(markerEdge);   
 }
 
 void LoopClosure::performLoopClosure()
@@ -433,13 +382,79 @@ void LoopClosure::performLoopClosure()
     loopIndexContainer[loopKeyCur] = loopKeyPre; //   使用hash map 存储回环对
 }
 
+void LoopClosure::generateLoopMarkers(visualization_msgs::MarkerArray &markerArray, double &lidar_end_time)
+{
+    if(loopIndexContainer.empty())
+        return;
+    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time);
+    std::string odometryFrame = "camera_init";
+
+    // 闭环顶点
+    visualization_msgs::Marker markerNode;
+    markerNode.header.frame_id = odometryFrame;
+    markerNode.header.stamp = timeLaserInfoStamp;
+    markerNode.action = visualization_msgs::Marker::ADD;
+    markerNode.type = visualization_msgs::Marker::SPHERE_LIST;
+    markerNode.ns = "loop_nodes";
+    markerNode.id = 0;
+    markerNode.pose.orientation.w = 1;
+    markerNode.scale.x = 0.3;
+    markerNode.scale.y = 0.3;
+    markerNode.scale.z = 0.3;
+    markerNode.color.r = 0;
+    markerNode.color.g = 0.8;
+    markerNode.color.b = 1;
+    markerNode.color.a = 1;
+
+    // 闭环边
+    visualization_msgs::Marker markerEdge;
+    markerEdge.header.frame_id = odometryFrame;
+    markerEdge.header.stamp = timeLaserInfoStamp;
+    markerEdge.action = visualization_msgs::Marker::ADD;
+    markerEdge.type = visualization_msgs::Marker::LINE_LIST;
+    markerEdge.ns = "loop_edges";
+    markerEdge.id = 1;
+    markerEdge.pose.orientation.w = 1;
+    markerEdge.scale.x = 0.1;
+    markerEdge.color.r = 0.9;
+    markerEdge.color.g = 0.9;
+    markerEdge.color.b = 0;
+    markerEdge.color.a = 1;
+
+    // 遍历闭环
+    for (auto it = loopIndexContainer.begin(); it != loopIndexContainer.end(); ++it) {
+        int key_cur = it->first;
+        int key_pre = it->second;
+
+        geometry_msgs::Point p;
+        p.x = cloudKeyPoses6D->points[key_cur].x;
+        p.y = cloudKeyPoses6D->points[key_cur].y;
+        p.z = cloudKeyPoses6D->points[key_cur].z;
+        markerNode.points.push_back(p);
+        markerEdge.points.push_back(p);
+
+        p.x = cloudKeyPoses6D->points[key_pre].x;
+        p.y = cloudKeyPoses6D->points[key_pre].y;
+        p.z = cloudKeyPoses6D->points[key_pre].z;
+        markerNode.points.push_back(p);
+        markerEdge.points.push_back(p);
+    }
+
+    markerArray.markers.push_back(markerNode);
+    markerArray.markers.push_back(markerEdge);   
+}
+
+
+
+
+
 
 class GTSAMOptimizer{
 public:
 
     GTSAMOptimizer(state_ikfom &state ,pcl::PointCloud<PointType>::Ptr& poses3D, pcl::PointCloud<PointTypePose>::Ptr& poses6D, std::vector<pcl::PointCloud<PointType>::Ptr>& frames);
     ~GTSAMOptimizer();
-
+    void setParams(bool reconstructKdTree, float distThreshold, float angleThreshold, float searchRadius, float poseDensity, float leafSize);
     void setInitialPose(Eigen::Vector3d &eulerAngle, Eigen::Vector3d &pos, double& last_time);
     void updatePath(const PointTypePose &pose_in, nav_msgs::Path &globalPath);
     bool iskeyFrame();
@@ -458,7 +473,6 @@ public:
     std::vector<pcl::PointCloud<PointType>::Ptr> &surfCloudKeyFrames;    
 private:
 
-    bool isRecontructKdTree;
     int updateKdtreeCount;
 
     bool aLoopIsClosed;
@@ -467,16 +481,18 @@ private:
     float transformTobeMapped[6]; //  当前帧的位姿(world系下)，欧拉角和位置。
 
     //gtsam
+    gtsam::ISAM2 *isam;
     gtsam::NonlinearFactorGraph gtSAMgraph;
     gtsam::Values initialEstimate;
     gtsam::Values optimizedEstimate;
-    gtsam::ISAM2 *isam;
     gtsam::Values isamCurrentEstimate;
     Eigen::MatrixXd poseCovariance; //位姿协方差
 
+    bool isRecontructKdTree;
     //Surrounding map(当前关键帧为中心，提取周围一定范围的关键帧构成的局部地图)
     float surroundingkeyframeAddingDistThreshold;  //判断是否为关键帧的距离阈值
     float surroundingkeyframeAddingAngleThreshold; //判断是否为关键帧的角度阈值
+
     float globalMapVisualizationSearchRadius;      //关键帧搜索半径
 
     pcl::VoxelGrid<PointType> downSizeFilterSubMapKeyPoses;     //子图关键帧降采样
@@ -495,6 +511,8 @@ GTSAMOptimizer::GTSAMOptimizer(state_ikfom &state, pcl::PointCloud<PointType>::P
     surroundingkeyframeAddingDistThreshold = 1.0;
     surroundingkeyframeAddingAngleThreshold = 0.2;
     globalMapVisualizationSearchRadius = 1000.0;
+
+
     //初始化其他成员变量
     transformTobeMapped[0] = 0;
     transformTobeMapped[1] = 0;
@@ -512,9 +530,21 @@ GTSAMOptimizer::GTSAMOptimizer(state_ikfom &state, pcl::PointCloud<PointType>::P
     optimizedEstimate.clear();
     isamCurrentEstimate.clear();
 
-    downSizeFilterSubMapKeyPoses.setLeafSize(10, 10, 10);
+    downSizeFilterSubMapKeyPoses.setLeafSize(10.0, 10.0, 10.0);
     downSizeFilterGlobalMapKeyFrames.setLeafSize(1.0, 1.0, 1.0); 
 
+}
+
+void GTSAMOptimizer::setParams(bool reconstructKdTree, float distThreshold, float angleThreshold, 
+    float searchRadius, float poseDensity, float leafSize) {
+    isRecontructKdTree = reconstructKdTree;
+    surroundingkeyframeAddingDistThreshold = distThreshold;
+    surroundingkeyframeAddingAngleThreshold = angleThreshold;
+    globalMapVisualizationSearchRadius = searchRadius;
+
+    // 更新降采样滤波器的参数
+    downSizeFilterSubMapKeyPoses.setLeafSize(poseDensity, poseDensity, poseDensity);
+    downSizeFilterGlobalMapKeyFrames.setLeafSize(leafSize, leafSize, leafSize);
 }
 GTSAMOptimizer::~GTSAMOptimizer()
 {
@@ -532,6 +562,7 @@ void GTSAMOptimizer::setInitialPose(Eigen::Vector3d &eulerAngle, Eigen::Vector3d
 
     lidar_end_time = last_time;
 }
+
 bool GTSAMOptimizer::iskeyFrame()
 {
     //如果是第一帧，直接返回,

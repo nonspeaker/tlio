@@ -97,7 +97,7 @@ std::string savePCDDirectory;
 
 
 // launch file
-bool feature_extracted_enable = false;
+bool feature_enabled = false;
 int point_filter_num = 2;
 int max_iteration = 4;
 double filter_size_surf_min = 0.5;
@@ -105,6 +105,7 @@ double filter_size_map_min = 0.5;
 double cube_len = 200;
 bool runtime_pos_log_enable = false;
 
+double filter_publish_map = 0.5;
 /***************************************************** */
 
 
@@ -190,10 +191,10 @@ int main(int argc, char** argv)
     nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");                      //IMU话题
     nh.param<bool>("common/time_sync_en", time_sync_en, false);                         //是否开启时间同步
     nh.param<double>("common/time_offset_lidar_to_imu", time_offset_lidar_to_imu, 0.0); //雷达相对于IMU时间偏移
-    nh.param<int>("preprocess/lidar_type", pclProcessor->lidar_type, AVIA);             //雷达类型  
-    std::cout << "p_pre->lidar_type " << pclProcessor->lidar_type << std::endl;           
-    nh.param<int>("preprocess/scan_line", pclProcessor->scan_line, 16);                 //激光雷达线数
-    nh.param<double>("preprocess/blind", pclProcessor->blind, 0.01);                    //盲区
+    nh.param<int>("preprocess/lidar_type", lidar_type, AVIA);             //雷达类型  
+    std::cout << "p_pre->lidar_type " << lidar_type << std::endl;           
+    nh.param<int>("preprocess/scan_line", scan_line, 16);                 //激光雷达线数
+    nh.param<double>("preprocess/blind", blind, 0.01);                    //盲区
     nh.param<double>("mapping/acc_cov", acc_cov, 0.1);                                  //加速度计噪声协方差
     nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);                                  //陀螺仪噪声协方差
     nh.param<double>("mapping/b_acc_cov", b_acc_cov, 0.0001);                           //加速度计偏置噪声协方差
@@ -212,9 +213,9 @@ int main(int argc, char** argv)
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);                         //是否保存点云  
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);                          //点云保存间隔
     //voxel filter paprams
-    nh.param<float>("odometrySurfLeafSize", odometrySurfLeafSize, 0.2);                 //odometry滤波器大小 
-    nh.param<float>("mappingCornerLeafSize", mappingCornerLeafSize, 0.2);               //mapping角点滤波器大小
-    nh.param<float>("mappingSurfLeafSize", mappingSurfLeafSize, 0.2);                   //mapping平面点滤波器大小
+    //nh.param<float>("odometrySurfLeafSize", odometrySurfLeafSize, 0.2);                 //odometry滤波器大小 
+    //nh.param<float>("mappingCornerLeafSize", mappingCornerLeafSize, 0.2);               //mapping角点滤波器大小
+    //nh.param<float>("mappingSurfLeafSize", mappingSurfLeafSize, 0.2);                   //mapping平面点滤波器大小
     //robot motion constraint (in case you are using a 2D robot)
     nh.param<float>("z_tollerance", z_tollerance, FLT_MAX);                             //z轴容差
     nh.param<float>("rotation_tollerance", rotation_tollerance, FLT_MAX);               //旋转容差
@@ -224,8 +225,8 @@ int main(int argc, char** argv)
     //Surrounding map
     nh.param<float>("surroundingkeyframeAddingDistThreshold", surroundingkeyframeAddingDistThreshold, 20.0);    //添加关键帧的距离阈值
     nh.param<float>("surroundingkeyframeAddingAngleThreshold", surroundingkeyframeAddingAngleThreshold, 0.2);   //添加关键帧的角度阈值
-    nh.param<float>("surroundingKeyframeDensity", surroundingKeyframeDensity, 1.0);                             //关键帧的稀疏程度
-    nh.param<float>("surroundingKeyframeSearchRadius", surroundingKeyframeSearchRadius, 50.0);                  //搜索周围关键帧的半径
+    //nh.param<float>("surroundingKeyframeDensity", surroundingKeyframeDensity, 1.0);                             //关键帧的稀疏程度
+    //nh.param<float>("surroundingKeyframeSearchRadius", surroundingKeyframeSearchRadius, 50.0);                  //搜索周围关键帧的半径
     // loop clousre
     nh.param<bool>("loopClosureEnableFlag", loopClosureEnableFlag, false);                   //回环检测使能
     nh.param<float>("loopClosureFrequency", loopClosureFrequency, 1.0);                      //回环检测频率
@@ -247,17 +248,24 @@ int main(int argc, char** argv)
     nh.param<std::string>("savePCDDirectory", savePCDDirectory, "/Downloads/LOAM/"); //保存点云目录0
 
 
-    nh.param<bool>("feature_extract_enable", pclProcessor->feature_enabled, false);  //特征提取开关
-    nh.param<int>("point_filter_num", pclProcessor->point_filter_num, 2);            //点云滤波器数量
+    nh.param<bool>("feature_extract_enable", feature_enabled, false);  //特征提取开关
+    nh.param<int>("point_filter_num", point_filter_num, 2);            //点云滤波器数量
     nh.param<int>("max_iteration", max_iteration, 4);                                //最大迭代次数
     nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);                 //平面点滤波器大小
-    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);                   //地图滤波器大小
+    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);     //地图滤波大小
     nh.param<double>("cube_side_length", cube_len, 200);                             //地图立方体边长
     nh.param<bool>("runtime_pos_log_enable", runtime_pos_log_enable, 0);             //是否启用运行时位置日志
+
+    nh.param<double>("filter_publish_map", filter_publish_map, 0.5);                 //发布点云大小
 
     //初始化地图时间戳和帧
     path.header.stamp = ros::Time::now();
     path.header.frame_id = "camera_init";
+
+
+    loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
+    gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
+    pclProcessor->setParams(lidar_type, scan_line, blind, det_range, feature_enabled, point_filter_num, filter_size_map_min, cube_len);
 
     //IMU处理器参数
     Eigen::Vector3d Lidar_T_wrt_IMU = Eigen::Vector3d::Zero();     //激光雷达相对于IMU的平移
@@ -271,6 +279,7 @@ int main(int argc, char** argv)
     imuProcessor->set_params(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU, Eigen::Vector3d(gyr_cov, gyr_cov, gyr_cov), Eigen::Vector3d(acc_cov, acc_cov, acc_cov),
         Eigen::Vector3d(b_gyr_cov, b_gyr_cov, b_gyr_cov), Eigen::Vector3d(b_acc_cov, b_acc_cov, b_acc_cov));
 
+    
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);//一秒执行5000次
 
@@ -330,7 +339,7 @@ int main(int argc, char** argv)
 
             //初始化k-d树，存第一帧点云
             if (ikdtree.Root_Node == nullptr) {
-                pclProcessor->initializeKdTree(ikdtree, feats_down_lidar, feats_down_world, filter_size_map_min, state_point);
+                pclProcessor->initializeKdTree(ikdtree, feats_down_lidar, feats_down_world, state_point);
                 continue;
             }
 
@@ -356,7 +365,7 @@ int main(int argc, char** argv)
             publisher.publishPath(path, state_point, lidar_end_time);
             //地图点云
             pclProcessor->transformToWorld(feats_undistort, feats_publish, state_point);
-            pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_size_map_min);
+            pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_publish_map);
             publisher.publishPointCloud(feats_publish, lidar_end_time);
 
             std::cout << "feats_down_size: " << feats_down_size << std::endl;

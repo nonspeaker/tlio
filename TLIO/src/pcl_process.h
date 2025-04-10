@@ -20,7 +20,8 @@ class PointCloudProcessor {
 public:
     PointCloudProcessor();
     ~PointCloudProcessor();
-
+    void setParams(int lidarType, int scanLine, double blindZone, float detRange, 
+        bool featureEnabled, int pointFilterNum, double filterSizeMapMin, float cubeLen);
     // 点云坐标变换
     void transformToWorld(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state);
 
@@ -35,29 +36,31 @@ public:
     
 
     // 初始化 k-d 树并存储第一帧点云
-    void initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, float filterSizeMapMin, const state_ikfom &state);
+    void initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, const state_ikfom &state);
 
     void process(const livox_ros_driver2::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out);
 
-    int lidar_type; //雷达类型
-    int scan_line; //雷达线数
-    double blind; //盲区大小（0.1m）
-
-    bool feature_enabled; //特征点是否开启
-    int point_filter_num; //点云滤波数
-
+ 
     
 
 private:
  
-    float mov_threshold = 1.5f;
-    float det_range = 300.0f;
-    float cube_len = 200.0f;
-    bool isLocalMapInit = false;
+    int lidar_type; //雷达类型
+    int scan_line; //雷达线数
+    double blind; //盲区大小（0.1m）
+    float det_range;
 
-    double filterSizeMapMin = 0.5;
+    bool feature_enabled; //特征点是否开启
+    int point_filter_num; //点云滤波数
+
+    //k-dtree
+    double filter_size_map_min;
+    float mov_threshold;
+    float cube_len;
+
     pcl::VoxelGrid<PointType> voxelFilter; // 用于下采样的体素滤波器
 
+    bool isLocalMapInit = false;
     BoxPointType localmapRange;
     vector<BoxPointType> cubNeedRm;
 
@@ -70,14 +73,37 @@ PointCloudProcessor::PointCloudProcessor()
     scan_line = 6;
     blind = 0.1;
 
+    feature_enabled = false;
     point_filter_num = 1;
+
+    mov_threshold = 1.5f;
+    det_range = 300.0f;
+    cube_len = 200.0f;
+    filter_size_map_min = 0.5;
+
     voxelFilter.setLeafSize(0.5, 0.5, 0.5); // 默认值，可在调用时覆盖
 }
 
 PointCloudProcessor::~PointCloudProcessor() {}
 
+void PointCloudProcessor::setParams(int lidarType, int scanLine, double blindZone, float detRange, bool featureEnabled, 
+    int pointFilterNum, double filterSizeMapMin, float cubeLen) {
 
-void PointCloudProcessor::process (const livox_ros_driver2::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
+    lidar_type = lidarType;
+    scan_line = scanLine;
+    blind = blindZone;
+    det_range = detRange;
+
+    feature_enabled = featureEnabled;
+    point_filter_num = pointFilterNum;
+
+    filter_size_map_min = filterSizeMapMin;
+    cube_len = cubeLen;
+
+}
+
+
+void PointCloudProcessor::process(const livox_ros_driver2::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
 {
     PointCloudXYZI pl;
     PointCloudXYZI pl_full;
@@ -123,9 +149,9 @@ void PointCloudProcessor::pointLidarToWorld(const PointType &pi, PointType &po, 
     po.intensity = pi.intensity;
 }
 
-void PointCloudProcessor::initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, float filterSizeMapMin, const state_ikfom &state) {
+void PointCloudProcessor::initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, const state_ikfom &state) {
     if (ikdtree.Root_Node == nullptr) {
-        ikdtree.set_downsample_param(filterSizeMapMin);
+        ikdtree.set_downsample_param(filter_size_map_min);
         featsDownWorld->resize(featsDownLidar->points.size());
 
         for (size_t i = 0; i < featsDownLidar->points.size(); ++i) {
@@ -221,11 +247,11 @@ void PointCloudProcessor::updateMapIncremental(const PointCloudXYZI::Ptr &featsD
             const PointVector &pointsNear = nearestPoints[i];
             bool isNeedAdd = true;
             PointType midPoint;
-            midPoint.x = floor(worldPoint.x / filterSizeMapMin) * filterSizeMapMin + 0.5 * filterSizeMapMin;
-            midPoint.y = floor(worldPoint.y / filterSizeMapMin) * filterSizeMapMin + 0.5 * filterSizeMapMin;
-            midPoint.z = floor(worldPoint.z / filterSizeMapMin) * filterSizeMapMin + 0.5 * filterSizeMapMin;
+            midPoint.x = floor(worldPoint.x / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
+            midPoint.y = floor(worldPoint.y / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
+            midPoint.z = floor(worldPoint.z / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
             float dist = calc_dist(worldPoint, midPoint);
-            if (fabs(pointsNear[0].x - midPoint.x) > 0.5 * filterSizeMapMin && fabs(pointsNear[0].y - midPoint.y) > 0.5 * filterSizeMapMin && fabs(pointsNear[0].z - midPoint.z) > 0.5 * filterSizeMapMin)
+            if (fabs(pointsNear[0].x - midPoint.x) > 0.5 * filter_size_map_min && fabs(pointsNear[0].y - midPoint.y) > 0.5 * filter_size_map_min && fabs(pointsNear[0].z - midPoint.z) > 0.5 * filter_size_map_min)
             {
                 pointNoNeedDownsample.push_back(worldPoint);//近邻点与当前点距离大，则不需要下采样，直接添加
                 continue;
