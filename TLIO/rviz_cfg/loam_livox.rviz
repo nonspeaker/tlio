@@ -261,7 +261,7 @@ Visualization Manager:
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
       Line Style: Billboards
-      Line Width: 0.20000000298023224
+      Line Width: 0.1
       Name: Path_gnss
       Offset:
         X: 0
