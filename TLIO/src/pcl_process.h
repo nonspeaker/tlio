@@ -35,10 +35,13 @@ public:
     // 增量更新地图
     void updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, KD_TREE &ikdtree, const vector<PointVector> &nearestPoints, const state_ikfom &state);
     
-
     // 初始化 k-d 树并存储第一帧点云
     void initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, const state_ikfom &state);
 
+    // 保存点云到文件
+    void savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename);
+
+    
     void process(const livox_ros_driver2::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out);
 
  

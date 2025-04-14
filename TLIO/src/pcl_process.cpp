@@ -1,5 +1,7 @@
 #include "pcl_process.h"
 
+#include <pcl/io/pcd_io.h>
+
 PointCloudProcessor::PointCloudProcessor()
 {
     lidar_type = 1;
@@ -206,4 +208,17 @@ void PointCloudProcessor::updateMapIncremental(const PointCloudXYZI::Ptr &featsD
 
     ikdtree.Add_Points(pointToAdd, true);
     ikdtree.Add_Points(pointNoNeedDownsample, false);
+}
+
+void PointCloudProcessor::savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename) {
+    if (cloud->empty()) {
+        std::cerr << "Point cloud is empty, cannot save to file: " << filename << std::endl;
+        return;
+    }
+
+    if (pcl::io::savePCDFileBinary(filename, *cloud) == -1) {
+        std::cerr << "Failed to save point cloud to file: " << filename << std::endl;
+    } else {
+        std::cout << "Point cloud saved to file: " << filename << std::endl;
+    }
 }

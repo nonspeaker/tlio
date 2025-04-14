@@ -135,8 +135,9 @@ Eigen::Vector3d lidar_position;//当前雷达位置
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());//当前帧去畸变后的点云
 PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云pcd_index
 PointCloudXYZI::Ptr feats_down_world(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云（世界坐标系）
-PointCloudXYZI::Ptr feats_publish(new PointCloudXYZI());//发布出去的点云
 
+PointCloudXYZI::Ptr feats_publish(new PointCloudXYZI());//发布出去的点云
+PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());//保存的点云
 
 std::shared_ptr<GTSAMOptimizer> gtsamOptimizer(new GTSAMOptimizer(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
 std::shared_ptr<LoopClosure> loopClosure(new LoopClosure(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
@@ -329,7 +330,7 @@ int main(int argc, char** argv)
             //下采样得到当前帧的点云
             pclProcessor->downsamplePointCloud(feats_undistort, feats_down_lidar, filter_size_surf_min);
             feats_down_size = feats_down_lidar->points.size();
-            
+            std::cout << "feats_down_size: " << feats_down_size << std::endl;
             //当前帧点云数量少，则警告
             if (feats_down_size < 5)
             {
@@ -363,17 +364,24 @@ int main(int argc, char** argv)
             publisher.publishOdometry(odometry,state_point, P, lidar_end_time);
             //发布路径
             publisher.publishPath(path, state_point, lidar_end_time);
-            //地图点云
+            //发布点云
             pclProcessor->transformToWorld(feats_undistort, feats_publish, state_point);
             pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_publish_map);
-            publisher.publishPointCloud(feats_publish, lidar_end_time);
+            //增量保存全部点云
+            *pcl_wait_save += *feats_publish;
 
-            std::cout << "feats_down_size: " << feats_down_size << std::endl;
+
+            publisher.publishPointCloud(feats_publish, lidar_end_time);
 
         }
         rate.sleep();
-
     }
+
+    //保存点云
+    std::string savePath(string(string(ROOT_DIR) + "PCD/scans") + string(".pcd"));
+    pclProcessor->savePointCloud(pcl_wait_save, savePath);
+
+
 
     return 0;
 }
