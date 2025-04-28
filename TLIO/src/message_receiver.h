@@ -11,16 +11,21 @@
 
 class MessageReceiver {
     public:
-        MessageReceiver(ros::NodeHandle &nh, std::shared_ptr<PointCloudProcessor> pclProcessor)
+        MessageReceiver(ros::NodeHandle &nh, std::string& lidar_topic, std::string& imu_topic, std::shared_ptr<PointCloudProcessor> pclProcessor)
             : pclProcessor(pclProcessor) {
-            subLidar = nh.subscribe("/livox/lidar", 200000, &MessageReceiver::lidarCallback, this);
-            subImu = nh.subscribe("/livox/imu", 200000, &MessageReceiver::imuCallback, this);
+
+            if(pclProcessor->lidar_type == 1)
+                subLidar = nh.subscribe(lidar_topic, 200000, &MessageReceiver::livoxLidarCallback, this);
+            else
+                subLidar = nh.subscribe(lidar_topic, 200000, &MessageReceiver::standardLidarCallback, this);
+            subImu = nh.subscribe(imu_topic, 200000, &MessageReceiver::imuCallback, this);
         }
     
         bool syncPackages(MeasureGroup &meas, double &lidarEndTime);
     
     private:
-        void lidarCallback(const livox_ros_driver2::CustomMsg::ConstPtr &msg);
+        void standardLidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg);
+        void livoxLidarCallback(const livox_ros_driver2::CustomMsg::ConstPtr &msg);
         void imuCallback(const sensor_msgs::Imu::ConstPtr &msg);
     
         ros::Subscriber subLidar;
@@ -45,7 +50,26 @@ class MessageReceiver {
         std::shared_ptr<PointCloudProcessor> pclProcessor;
     };
 
-    void MessageReceiver::lidarCallback(const livox_ros_driver2::CustomMsg::ConstPtr &msg) {
+    void MessageReceiver::standardLidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg)
+    {
+        std::lock_guard<std::mutex> lock(bufferMutex);
+    
+        if (msg->header.stamp.toSec() < lastTimestampLidar) {
+            ROS_ERROR("Lidar loop back, clearing buffer");
+            lidarBuffer.clear();
+        }
+        lastTimestampLidar = msg->header.stamp.toSec();
+    
+        PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
+        pclProcessor->process(msg, ptr);
+        lidarBuffer.push_back(ptr);
+        timeBuffer.push_back(lastTimestampLidar);
+    
+        bufferCondition.notify_all();
+    }
+
+
+    void MessageReceiver::livoxLidarCallback(const livox_ros_driver2::CustomMsg::ConstPtr &msg) {
         std::lock_guard<std::mutex> lock(bufferMutex);
     
         if (msg->header.stamp.toSec() < lastTimestampLidar) {

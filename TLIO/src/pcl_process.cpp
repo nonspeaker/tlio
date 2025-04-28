@@ -1,44 +1,40 @@
 #include "pcl_process.h"
 
-#include <pcl/io/pcd_io.h>
 
 PointCloudProcessor::PointCloudProcessor()
 {
+    given_offset_time = false; 
+
     lidar_type = 1;
     scan_line = 6;
+    scan_rate = 10;
+    time_unit = 2; // 0: sec, 1: ms, 2: us, 3: ns
     blind = 0.1;
 
     feature_enabled = false;
     point_filter_num = 1;
-
-    mov_threshold = 1.5f;
-    det_range = 300.0f;
-    cube_len = 200.0f;
-    filter_size_map_min = 0.5;
 
     voxelFilter.setLeafSize(0.5, 0.5, 0.5); // 默认值，可在调用时覆盖
 }
 
 PointCloudProcessor::~PointCloudProcessor() {}
 
-void PointCloudProcessor::setParams(int lidarType, int scanLine, double blindZone, float detRange, bool featureEnabled, 
-    int pointFilterNum, double filterSizeMapMin, float cubeLen) {
+
+void PointCloudProcessor::setParams(int lidarType, int scanLine, int scanRate, int timeUnit, double blindZone, bool featureEnabled, int pointFilterNum){
+            
 
     lidar_type = lidarType;
     scan_line = scanLine;
+    scan_rate = scanRate;
+    time_unit = timeUnit;
     blind = blindZone;
-    det_range = detRange;
 
     feature_enabled = featureEnabled;
     point_filter_num = pointFilterNum;
-
-    filter_size_map_min = filterSizeMapMin;
-    cube_len = cubeLen;
-
 }
 
 
-void PointCloudProcessor::process(const livox_ros_driver2::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
+void PointCloudProcessor::avia_handler(const livox_ros_driver2::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
 {
     PointCloudXYZI pl;
     PointCloudXYZI pl_full;
@@ -71,30 +67,289 @@ void PointCloudProcessor::process(const livox_ros_driver2::CustomMsg::ConstPtr &
     }
     
     *pcl_out = pl;
+
 }
 
-void PointCloudProcessor::pointLidarToWorld(const PointType &pi, PointType &po, const state_ikfom &state) 
+
+
+void PointCloudProcessor::process(const livox_ros_driver2::CustomMsg::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
 {
-    Eigen::Vector3d p_lidar(pi.x, pi.y, pi.z);
-    Eigen::Vector3d p_world(state.rot.matrix() * (state.offset_R_L_I.matrix() * p_lidar + state.offset_T_L_I) + state.pos);
-
-    po.x = p_world(0);
-    po.y = p_world(1);
-    po.z = p_world(2);
-    po.intensity = pi.intensity;
+    avia_handler(msg, pcl_out);
 }
 
-void PointCloudProcessor::initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, const state_ikfom &state) {
-    if (ikdtree.Root_Node == nullptr) {
-        ikdtree.set_downsample_param(filter_size_map_min);
-        featsDownWorld->resize(featsDownLidar->points.size());
+void PointCloudProcessor::velodyne_handler(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
+{
+    PointCloudXYZI pl_surf;
+    pl_surf.clear();
+    pcl::PointCloud<velodyne_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    int plsize = pl_orig.points.size();
+    if (plsize == 0)
+        return;
+    pl_surf.reserve(plsize);
 
-        for (size_t i = 0; i < featsDownLidar->points.size(); ++i) {
-            pointLidarToWorld(featsDownLidar->points[i], featsDownWorld->points[i], state);
+    /*** These variables only works when no point timestamps given ***/
+    double omega_l = 0.361 * scan_rate; // scan angular velocity
+    std::vector<bool> is_first(scan_line, true);
+    std::vector<double> yaw_fp(scan_line, 0.0);   // yaw of first scan point
+    std::vector<float> yaw_last(scan_line, 0.0);  // yaw of last scan point
+    std::vector<float> time_last(scan_line, 0.0); // last offset time
+    /*****************************************************************/
+
+    if (pl_orig.points[plsize - 1].time > 0)
+    {
+        given_offset_time = true;
+    }
+    else
+    {
+        given_offset_time = false;
+        double yaw_first = atan2(pl_orig.points[0].y, pl_orig.points[0].x) * 57.29578;
+        double yaw_end = yaw_first;
+        int layer_first = pl_orig.points[0].ring;
+        for (uint i = plsize - 1; i > 0; i--)
+        {
+        if (pl_orig.points[i].ring == layer_first)
+        {
+            yaw_end = atan2(pl_orig.points[i].y, pl_orig.points[i].x) * 57.29578;
+            break;
+        }
+        }
+    }
+
+
+    for (int i = 0; i < plsize; i++)
+    {
+        PointType added_pt;
+        // cout<<"!!!!!!"<<i<<" "<<plsize<<endl;
+
+        added_pt.normal_x = 0;
+        added_pt.normal_y = 0;
+        added_pt.normal_z = 0;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        added_pt.curvature = pl_orig.points[i].time * time_unit_scale; // curvature unit: ms // cout<<added_pt.curvature<<endl;
+        // std::cout << "added_pt.curvature:" << added_pt.curvature << std::endl;
+
+
+        if (!given_offset_time)
+        {
+        int layer = pl_orig.points[i].ring;
+        double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
+
+        if (is_first[layer])
+        {
+            // printf("layer: %d; is first: %d", layer, is_first[layer]);
+            yaw_fp[layer] = yaw_angle;
+            is_first[layer] = false;
+            added_pt.curvature = 0.0;
+            yaw_last[layer] = yaw_angle;
+            time_last[layer] = added_pt.curvature;
+            continue;
         }
 
-        ikdtree.Build(featsDownWorld->points);
+        // compute offset time
+        if (yaw_angle <= yaw_fp[layer])
+        {
+            added_pt.curvature = (yaw_fp[layer] - yaw_angle) / omega_l;
+        }
+        else
+        {
+            added_pt.curvature = (yaw_fp[layer] - yaw_angle + 360.0) / omega_l;
+        }
+
+        if (added_pt.curvature < time_last[layer])
+            added_pt.curvature += 360.0 / omega_l;
+
+        yaw_last[layer] = yaw_angle;
+        time_last[layer] = added_pt.curvature;
+        }
+
+        if (i % point_filter_num == 0)
+        {
+        if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind * blind))
+        {
+            pl_surf.points.push_back(added_pt);
+        }
+        }
     }
+    *pcl_out = pl_surf;
+  
+}
+
+void PointCloudProcessor::oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
+{
+    PointCloudXYZI pl_surf;
+    pcl::PointCloud<ouster_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    int plsize = pl_orig.size();
+    pl_surf.reserve(plsize);
+
+    for (int i = 0; i < pl_orig.points.size(); i++)
+    {
+        if (i % point_filter_num != 0)
+        continue;
+
+        double range = pl_orig.points[i].x * pl_orig.points[i].x + pl_orig.points[i].y * pl_orig.points[i].y + pl_orig.points[i].z * pl_orig.points[i].z;
+
+        if (range < (blind * blind))
+        continue;
+
+        Eigen::Vector3d pt_vec;
+        PointType added_pt;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        added_pt.normal_x = 0;
+        added_pt.normal_y = 0;
+        added_pt.normal_z = 0;
+        added_pt.curvature = pl_orig.points[i].t * time_unit_scale; // curvature unit: ms
+
+        pl_surf.points.push_back(added_pt);
+    }
+    *pcl_out = pl_surf;
+}
+
+void PointCloudProcessor::rs_handler(const sensor_msgs::PointCloud2_<allocator<void>>::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
+{
+    PointCloudXYZI pl_surf;
+    pl_surf.clear();
+
+    pcl::PointCloud<rslidar_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    int plsize = pl_orig.points.size();
+    pl_surf.reserve(plsize);
+
+    /*** These variables only works when no point timestamps given ***/
+    double omega_l = 0.361 * scan_rate; // scan angular velocity
+    std::vector<bool> is_first(scan_line, true);
+    std::vector<double> yaw_fp(scan_line, 0.0);   // yaw of first scan point
+    std::vector<float> yaw_last(scan_line, 0.0);  // yaw of last scan point
+    std::vector<float> time_last(scan_line, 0.0); // last offset time
+    /*****************************************************************/
+
+    if (pl_orig.points[plsize - 1].timestamp > 0) // todo check pl_orig.points[plsize - 1].time
+    {
+    given_offset_time = true;
+    // std::cout << "given_offset_time = true " << std::endl;
+    }
+    else
+    {
+    given_offset_time = false;
+    double yaw_first = atan2(pl_orig.points[0].y, pl_orig.points[0].x) * 57.29578; // 记录第一个点(index 0)的yaw， to degree
+    double yaw_end = yaw_first;
+    int layer_first = pl_orig.points[0].ring; // 第一个点(index 0)的layer序号
+    for (uint i = plsize - 1; i > 0; i--)     // 倒序遍历，找到与第一个点相同layer的最后一个点
+    {
+        if (pl_orig.points[i].ring == layer_first)
+        {
+        yaw_end = atan2(pl_orig.points[i].y, pl_orig.points[i].x) * 57.29578; // 与第一个点相同layer的最后一个点的yaw
+        break;
+        }
+    }
+    }
+
+    for (int i = 0; i < plsize; i++)
+    {
+        PointType added_pt;
+
+        added_pt.normal_x = 0;
+        added_pt.normal_y = 0;
+        added_pt.normal_z = 0;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        added_pt.curvature = (pl_orig.points[i].timestamp - pl_orig.points[0].timestamp) * 1000.0; // curvature unit: ms
+        // std::cout << "added_pt.curvature:" << added_pt.curvature << std::endl;
+
+        if (!given_offset_time)
+        {
+            int layer = pl_orig.points[i].ring;
+            double yaw_angle = atan2(added_pt.y, added_pt.x) * 57.2957;
+
+            if (is_first[layer])
+            {
+            // printf("layer: %d; is first: %d", layer, is_first[layer]);
+            yaw_fp[layer] = yaw_angle;
+            is_first[layer] = false;
+            added_pt.curvature = 0.0;
+            yaw_last[layer] = yaw_angle;
+            time_last[layer] = added_pt.curvature;
+            continue;
+            }
+
+            // compute offset time
+            if (yaw_angle <= yaw_fp[layer])
+            {
+            added_pt.curvature = (yaw_fp[layer] - yaw_angle) / omega_l;
+            }
+            else
+            {
+            added_pt.curvature = (yaw_fp[layer] - yaw_angle + 360.0) / omega_l;
+            }
+
+            if (added_pt.curvature < time_last[layer])
+            added_pt.curvature += 360.0 / omega_l;
+
+            yaw_last[layer] = yaw_angle;
+            time_last[layer] = added_pt.curvature;
+        }
+
+        if (i % point_filter_num == 0)
+        {
+            if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z > (blind * blind) )
+            {
+            pl_surf.points.push_back(added_pt);
+            }
+        }
+    }
+    *pcl_out = pl_surf;
+}
+
+
+void PointCloudProcessor::process(const sensor_msgs::PointCloud2::ConstPtr &msg, PointCloudXYZI::Ptr &pcl_out)
+{
+    switch (time_unit)
+    {
+    case SEC:
+      time_unit_scale = 1.e3f;
+      break;
+    case MS:
+      time_unit_scale = 1.f;
+      break;
+    case US:
+      time_unit_scale = 1.e-3f;
+      break;
+    case NS:
+      time_unit_scale = 1.e-6f;
+      break;
+    default:
+      time_unit_scale = 1.f;
+      break;
+    }
+
+    switch (lidar_type)
+    {
+    case VELO16:
+      velodyne_handler(msg, pcl_out);
+      break;
+
+    case OUST64:
+      oust64_handler(msg, pcl_out);
+      break;
+
+    case RS32:
+      rs_handler(msg, pcl_out);
+      break;
+  
+    default:
+      printf("Error LiDAR Type");
+      break;
+    }    
+
 }
 
 void PointCloudProcessor::downsamplePointCloud(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, float leafSize) 
@@ -102,123 +357,4 @@ void PointCloudProcessor::downsamplePointCloud(const PointCloudXYZI::Ptr &inputC
     voxelFilter.setLeafSize(leafSize, leafSize, leafSize);
     voxelFilter.setInputCloud(inputCloud);
     voxelFilter.filter(*outputCloud);
-}
-
-void PointCloudProcessor::transformToWorld(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state)
-{
-    int size = inputCloud->points.size();
-    outputCloud->resize(size);
-    for(int i = 0; i < size; ++i)
-        pointLidarToWorld(inputCloud->points[i], outputCloud->points[i], state);
-
-}
-
-void PointCloudProcessor::updateLocalMapRange(const Eigen::Vector3d &lidarPosition, KD_TREE &ikdtree)
-{
-    cubNeedRm.clear(); // 清空需要删除的立方体
-
-    if (!isLocalMapInit) { // 局部地图范围初始化
-        for (int i = 0; i < 3; i++) {
-            localmapRange.vertex_min[i] = lidarPosition(i) - cube_len / 2.0; // 局部地图的最小顶点
-            localmapRange.vertex_max[i] = lidarPosition(i) + cube_len / 2.0; // 局部地图的最大顶点
-        }
-        isLocalMapInit = true;
-        return;
-    }
-
-    float distToMapEdge[3][2]; // 当前位姿到局部地图边缘的距离
-    bool isNeedMove = false;
-    for (int i = 0; i < 3; i++) {
-        distToMapEdge[i][0] = fabs(lidarPosition(i) - localmapRange.vertex_min[i]);
-        distToMapEdge[i][1] = fabs(lidarPosition(i) - localmapRange.vertex_max[i]);
-        if (distToMapEdge[i][0] <= mov_threshold * det_range || distToMapEdge[i][1] <= mov_threshold * det_range)
-            isNeedMove = true;
-    }
-    if (!isNeedMove)
-        return;
-
-    BoxPointType newLocalMapRange, tmpRange;
-    newLocalMapRange = localmapRange;
-    float movDist = max((cube_len - 2.0 * mov_threshold * det_range) * 0.5 * 0.9, double(det_range * (mov_threshold - 1)));
-    for (int i = 0; i < 3; i++) {
-        tmpRange = localmapRange;
-        if (distToMapEdge[i][0] <= mov_threshold * det_range) {
-            newLocalMapRange.vertex_max[i] -= movDist;
-            newLocalMapRange.vertex_min[i] -= movDist;
-            tmpRange.vertex_min[i] = localmapRange.vertex_max[i] - movDist;
-            cubNeedRm.push_back(tmpRange);
-        } else if (distToMapEdge[i][1] <= mov_threshold * det_range) {
-            newLocalMapRange.vertex_max[i] += movDist;
-            newLocalMapRange.vertex_min[i] += movDist;
-            tmpRange.vertex_max[i] = localmapRange.vertex_min[i] + movDist;
-            cubNeedRm.push_back(tmpRange);
-        }
-    }
-    localmapRange = newLocalMapRange;
-
-    // 收集点云缓存
-    PointVector pointsHistory;
-    ikdtree.acquire_removed_points(pointsHistory);
-
-    if (!cubNeedRm.empty())
-        int kdtreeDeleteCounter = ikdtree.Delete_Point_Boxes(cubNeedRm); // 删除点
-}
-
-void PointCloudProcessor::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, KD_TREE &ikdtree, const vector<PointVector> &nearestPoints, const state_ikfom &state) {
-    PointVector pointToAdd;
-    PointVector pointNoNeedDownsample;
-
-    int featsDownSize = featsDownLidar->points.size();
-    pointToAdd.reserve(featsDownSize);
-    pointNoNeedDownsample.reserve(featsDownSize);
-
-    for (int i = 0; i < featsDownSize; i++) {
-        // 转换到世界坐标系
-        PointType worldPoint;
-        pointLidarToWorld(featsDownLidar->points[i], worldPoint, state);
-        featsDownWorld->points[i] = worldPoint;
-
-        if (!nearestPoints[i].empty()) {
-            const PointVector &pointsNear = nearestPoints[i];
-            bool isNeedAdd = true;
-            PointType midPoint;
-            midPoint.x = floor(worldPoint.x / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
-            midPoint.y = floor(worldPoint.y / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
-            midPoint.z = floor(worldPoint.z / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
-            float dist = calc_dist(worldPoint, midPoint);
-            if (fabs(pointsNear[0].x - midPoint.x) > 0.5 * filter_size_map_min && fabs(pointsNear[0].y - midPoint.y) > 0.5 * filter_size_map_min && fabs(pointsNear[0].z - midPoint.z) > 0.5 * filter_size_map_min)
-            {
-                pointNoNeedDownsample.push_back(worldPoint);//近邻点与当前点距离大，则不需要下采样，直接添加
-                continue;
-            }
-            for (int j = 0; j < NUM_MATCH_POINTS; j++) {
-                if (pointsNear.size() < NUM_MATCH_POINTS)
-                    break;
-                if (calc_dist(pointsNear[j], midPoint) < dist) {
-                    isNeedAdd = false;
-                    break;
-                }
-            }
-            if (isNeedAdd)
-                pointToAdd.push_back(worldPoint);
-        } else {
-            pointToAdd.push_back(worldPoint);
-        }
-    }
-
-    ikdtree.Add_Points(pointToAdd, true);
-    ikdtree.Add_Points(pointNoNeedDownsample, false);
-}
-
-void PointCloudProcessor::savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename) {
-    if (cloud->empty()) {
-        std::cerr << "Point cloud is empty, cannot save to file: " << filename << std::endl;
-        return;
-    }
-
-    if (pcl::io::savePCDFileBinary(filename, *cloud) == -1) {
-        std::cerr << "Failed to save point cloud to file: " << filename << std::endl;
-    } else {
-        std::cout << "Point cloud saved to file: " << filename << std::endl;
-    }
 }

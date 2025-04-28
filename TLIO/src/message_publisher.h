@@ -74,6 +74,45 @@ void MessagePublisher::publishOdometry(nav_msgs::Odometry& odometry , const stat
     q.setZ(odometry.pose.pose.orientation.z);
     transform.setRotation(q);
     br.sendTransform(tf::StampedTransform(transform, odometry.header.stamp, "camera_init", "lidar"));
+
+
+        // 写出里程计信息到文件
+    static std::ofstream odom_file("/home/tuyanchen/Livox2/TLIO/src/TLIO/Log/odom_log.csv", std::ios::app);
+
+    // 添加 CSV 文件的表头（仅在文件首次打开时写入）
+    static bool is_header_written = false;
+    if (!is_header_written && odom_file.is_open()) {
+        odom_file << "%time,field.header.seq,field.header.stamp,"
+                << "field.pose.pose.position.x,field.pose.pose.position.y,field.pose.pose.position.z,"
+                << "field.pose.pose.orientation.x,field.pose.pose.orientation.y,field.pose.pose.orientation.z,field.pose.pose.orientation.w,"
+                << "field.twist.twist.linear.x,field.twist.twist.linear.y,field.twist.twist.linear.z,"
+                << "field.twist.twist.angular.x,field.twist.twist.angular.y,field.twist.twist.angular.z\n";
+        is_header_written = true;
+    }
+
+    if (odom_file.is_open()) {
+        // 时间戳保留 14 位小数
+        odom_file << std::scientific << std::setprecision(14)
+                  << odometry.header.stamp.toNSec() << "," // 时间戳（纳秒）
+                  << odometry.header.seq << ","           // 序列号
+                  << odometry.header.stamp.toNSec() << ","; // 时间戳（纳秒）
+    
+        // 其他字段保留 15 位小数
+        odom_file << std::setprecision(15)
+                  << odometry.pose.pose.position.x << ","
+                  << odometry.pose.pose.position.y << ","
+                  << odometry.pose.pose.position.z << "," // 位置
+                  << odometry.pose.pose.orientation.x << ","
+                  << odometry.pose.pose.orientation.y << ","
+                  << odometry.pose.pose.orientation.z << ","
+                  << odometry.pose.pose.orientation.w << "," // 旋转（四元数）
+                  << odometry.twist.twist.linear.x << ","
+                  << odometry.twist.twist.linear.y << ","
+                  << odometry.twist.twist.linear.z << "," // 线速度
+                  << odometry.twist.twist.angular.x << ","
+                  << odometry.twist.twist.angular.y << ","
+                  << odometry.twist.twist.angular.z << "\n"; // 角速度
+    }
 }
 
 

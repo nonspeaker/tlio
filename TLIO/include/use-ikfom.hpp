@@ -19,8 +19,8 @@ struct state_ikfom
 {
 	Eigen::Vector3d pos = Eigen::Vector3d(0,0,0); //位置
 	Sophus::SO3 rot = Sophus::SO3(Eigen::Matrix3d::Identity()); //旋转矩阵
-	Sophus::SO3 offset_R_L_I = Sophus::SO3(Eigen::Matrix3d::Identity()); //lidar到IMU的旋转外参偏置
-	Eigen::Vector3d offset_T_L_I = Eigen::Vector3d(0,0,0); //lidar到IMU的平移外参偏置
+	Sophus::SO3 offset_R_L_I = Sophus::SO3(Eigen::Matrix3d::Identity()); //lidar到IMU的旋转外参
+	Eigen::Vector3d offset_T_L_I = Eigen::Vector3d(0,0,0); //lidar到IMU的平移外参
 	Eigen::Vector3d vel = Eigen::Vector3d(0,0,0); //速度
 	Eigen::Vector3d bg = Eigen::Vector3d(0,0,0); //角速度偏置
 	Eigen::Vector3d ba = Eigen::Vector3d(0,0,0); //加速度偏置

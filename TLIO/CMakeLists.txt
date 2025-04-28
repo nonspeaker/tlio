@@ -93,8 +93,9 @@ catkin_package(
 add_library(ikd_Tree include/ikd-Tree/ikd_Tree.cpp)
 add_library(pcl_process src/pcl_process.cpp)
 add_library(imu_process src/imu_process.cpp)
+add_library(local_map src/local_map.cpp)
 add_library(optimization src/optimization.cpp)
 add_executable(tlio src/tlio.cpp)
-target_link_libraries(tlio ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${Sophus_LIBRARIES} ${GeographicLib_LIBRARIES} ikd_Tree gtsam pcl_process imu_process optimization) 
+target_link_libraries(tlio ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${Sophus_LIBRARIES} ${GeographicLib_LIBRARIES} ikd_Tree gtsam pcl_process imu_process local_map optimization) 
 target_include_directories(tlio PRIVATE ${PYTHON_INCLUDE_DIRS})
 

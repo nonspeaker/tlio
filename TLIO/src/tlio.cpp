@@ -23,6 +23,7 @@
 // 自定义头文件
 #include "imu_process.h"
 #include "pcl_process.h"
+#include "local_map.h"
 #include "optimization.h"
 #include "common_lib.hpp"
 #include "message_receiver.h"
@@ -35,14 +36,17 @@ using namespace std;
 
 /******************ROS 配置参数 ******************** */
 //common
-std::string lid_topic = "/livox/lidar";
+std::string lidar_topic = "/livox/lidar";
 std::string imu_topic = "/livox/imu";
 bool time_sync_en = false;
 double time_offset_lidar_to_imu = 0.0;//lidar相对于imu时间偏移，配置参数
 //preprocess
 int lidar_type = AVIA;
 int scan_line = 16;
+int scan_rate = 10;
+int time_unit = SEC;
 double blind = 0.01;
+
 //mapping
 double acc_cov = 0.1;
 double gyr_cov = 0.1;
@@ -143,6 +147,7 @@ std::shared_ptr<GTSAMOptimizer> gtsamOptimizer(new GTSAMOptimizer(state_point, c
 std::shared_ptr<LoopClosure> loopClosure(new LoopClosure(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
 std::shared_ptr<PointCloudProcessor> pclProcessor(new PointCloudProcessor());
 std::shared_ptr<ImuProcessor> imuProcessor(new ImuProcessor());
+std::shared_ptr<LocalMapManager> localMapManager(new LocalMapManager());
 
 KD_TREE ikdtree;
 std::vector<PointVector> Nearest_Points;
@@ -188,14 +193,17 @@ int main(int argc, char** argv)
     ros::init(argc, argv, "tlio");
     ros::NodeHandle nh;
 
-    nh.param<string>("common/lid_topic", lid_topic, "/livox/lidar");                    //雷达点云话题
+    nh.param<string>("common/lidar_topic", lidar_topic, "/livox/lidar");                    //雷达点云话题
     nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");                      //IMU话题
     nh.param<bool>("common/time_sync_en", time_sync_en, false);                         //是否开启时间同步
     nh.param<double>("common/time_offset_lidar_to_imu", time_offset_lidar_to_imu, 0.0); //雷达相对于IMU时间偏移
     nh.param<int>("preprocess/lidar_type", lidar_type, AVIA);             //雷达类型  
     std::cout << "p_pre->lidar_type " << lidar_type << std::endl;           
     nh.param<int>("preprocess/scan_line", scan_line, 16);                 //激光雷达线数
+    nh.param<int>("preprocess/scan_rate", scan_rate, 10);
     nh.param<double>("preprocess/blind", blind, 0.01);                    //盲区
+    nh.param<int>("preprocess/timestamp_unit", time_unit, US);            //时间单位
+
     nh.param<double>("mapping/acc_cov", acc_cov, 0.1);                                  //加速度计噪声协方差
     nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);                                  //陀螺仪噪声协方差
     nh.param<double>("mapping/b_acc_cov", b_acc_cov, 0.0001);                           //加速度计偏置噪声协方差
@@ -253,7 +261,7 @@ int main(int argc, char** argv)
     nh.param<int>("point_filter_num", point_filter_num, 2);            //点云滤波器数量
     nh.param<int>("max_iteration", max_iteration, 4);                                //最大迭代次数
     nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);                 //平面点滤波器大小
-    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);     //地图滤波大小
+    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);                   //地图滤波大小
     nh.param<double>("cube_side_length", cube_len, 200);                             //地图立方体边长
     nh.param<bool>("runtime_pos_log_enable", runtime_pos_log_enable, 0);             //是否启用运行时位置日志
 
@@ -266,8 +274,8 @@ int main(int argc, char** argv)
 
     loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
     gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
-    pclProcessor->setParams(lidar_type, scan_line, blind, det_range, feature_enabled, point_filter_num, filter_size_map_min, cube_len);
-
+    pclProcessor->setParams(lidar_type, scan_line, scan_rate, time_unit, blind, feature_enabled, point_filter_num);
+    localMapManager->setParams(det_range, filter_size_map_min, cube_len);
     //IMU处理器参数
     Eigen::Vector3d Lidar_T_wrt_IMU = Eigen::Vector3d::Zero();     //激光雷达相对于IMU的平移
     Eigen::Matrix3d Lidar_R_wrt_IMU = Eigen::Matrix3d::Identity(); //激光雷达相对于IMU的旋转
@@ -286,7 +294,7 @@ int main(int argc, char** argv)
 
     MessagePublisher publisher(nh);
 
-    MessageReceiver receiver(nh, pclProcessor);
+    MessageReceiver receiver(nh, lidar_topic, imu_topic, pclProcessor);
  
     // 回环检测线程
     std::thread loopthread(loopClosureThread, std::ref(publisher));
@@ -306,12 +314,12 @@ int main(int argc, char** argv)
                 continue;
             }       
 
-            std::cout << "feats_raw_size: " << Measures.lidar->points.size()  << std::endl;
+            //std::cout << "feats_raw_size: " << Measures.lidar->points.size()  << std::endl;
             
             //点云去运动畸变，反向传播
             imuProcessor->process(Measures, kf, feats_undistort);
             int feats_undistort_size = feats_undistort->points.size();
-            std::cout << "feats_undistort_size: " << feats_undistort_size << std::endl;
+            //std::cout << "feats_undistort_size: " << feats_undistort_size << std::endl;
             
 
             if (feats_undistort->empty() || (feats_undistort == NULL))
@@ -326,11 +334,10 @@ int main(int argc, char** argv)
             //检查当前lidar数据时间，与最早lidar数据时间是否足够//判断EKF是否初始化，根据当前雷达数据包的时间与第一帧雷达数据包的时间戳的差值是否小于初始化时间
             is_ekf_init = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
             //根据lidar在世界坐标系下的位置，重新确定局部地图范围，移除距离远的点。
-            pclProcessor->updateLocalMapRange(lidar_position, ikdtree);
+            localMapManager->updateLocalMapRange(lidar_position, ikdtree);
             //下采样得到当前帧的点云
             pclProcessor->downsamplePointCloud(feats_undistort, feats_down_lidar, filter_size_surf_min);
             feats_down_size = feats_down_lidar->points.size();
-            std::cout << "feats_down_size: " << feats_down_size << std::endl;
             //当前帧点云数量少，则警告
             if (feats_down_size < 5)
             {
@@ -340,7 +347,7 @@ int main(int argc, char** argv)
 
             //初始化k-d树，存第一帧点云
             if (ikdtree.Root_Node == nullptr) {
-                pclProcessor->initializeKdTree(ikdtree, feats_down_lidar, feats_down_world, state_point);
+                localMapManager->initializeKdTree(ikdtree, feats_down_lidar, feats_down_world, state_point);
                 continue;
             }
 
@@ -355,18 +362,21 @@ int main(int argc, char** argv)
             gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
  
             state_point = kf.get_x();
-            //向地图k-d树里添加点云
-            feats_down_world->resize(feats_down_size);
-            pclProcessor->updateMapIncremental(feats_down_lidar, feats_down_world, ikdtree, Nearest_Points, state_point);
 
             //发布里程计信息
             P = kf.get_P();
             publisher.publishOdometry(odometry,state_point, P, lidar_end_time);
+
+            //向地图k-d树里添加点云
+            feats_down_world->resize(feats_down_size);
+            localMapManager->updateMapIncremental(feats_down_lidar, feats_down_world, ikdtree, Nearest_Points, state_point);
+
+ 
             //发布路径
             publisher.publishPath(path, state_point, lidar_end_time);
             //发布点云
-            pclProcessor->transformToWorld(feats_undistort, feats_publish, state_point);
-            pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_publish_map);
+            localMapManager->transformToWorld(feats_undistort, feats_publish, state_point);
+            //pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_publish_map);
             //增量保存全部点云
             *pcl_wait_save += *feats_publish;
 
@@ -379,7 +389,7 @@ int main(int argc, char** argv)
 
     //保存点云
     std::string savePath(string(string(ROOT_DIR) + "PCD/scans") + string(".pcd"));
-    pclProcessor->savePointCloud(pcl_wait_save, savePath);
+    localMapManager->savePointCloud(pcl_wait_save, savePath);
 
 
 

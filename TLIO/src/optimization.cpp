@@ -42,8 +42,6 @@ void LoopClosure::setParams(bool enableFlag, float loopClosureFreq, float search
 
 }
 
-
-
 bool LoopClosure::detectLoopClosureDistance(int &latestID, int &closestID)
 {
     // 当前关键帧帧
@@ -431,7 +429,7 @@ void GTSAMOptimizer::recontructIKdTree(KD_TREE &ikdtree){
         updateKdtreeCount = 0;
         ROS_INFO("Reconstructed  ikdtree ");
     }
-    updateKdtreeCount ++ ; 
+    updateKdtreeCount++ ; 
 }
 
 void GTSAMOptimizer::updatePath(const PointTypePose &pose_in, nav_msgs::Path &globalPath)

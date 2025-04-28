@@ -14,10 +14,12 @@ public:
 
     void set_params(const V3D &transl, const M3D &rot, const V3D &gyr, const V3D &acc, const V3D &gyr_bias, const V3D &acc_bias);
     void process(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI::Ptr &pcl_out);
-
+    void Reset();   //重置参数
 private:
 
     bool is_need_init;                  //是否需要初始化
+    bool is_first_frame;                //是否是第一帧
+    int init_iter_num;                  //初始化迭代次数
     vector<Pose6D> imu_pose_deque;      //存储imu位姿(反向传播用) 
 
     V3D Lidar_T_wrt_IMU;                //Lidar相对于IMU的平移外参

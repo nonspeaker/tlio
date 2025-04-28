@@ -3,6 +3,8 @@
 ImuProcessor::ImuProcessor()
 {
     is_need_init = true;    
+    is_first_frame = true; 
+    init_iter_num = 1;          
 
     Q = process_noise_cov();                    //调用use-ikfom.hpp里面的process_noise_cov初始化噪声协方差
     cov_acc = V3D(0.1, 0.1, 0.1);               //加速度协方差初始化
@@ -32,12 +34,36 @@ void ImuProcessor::set_params(const V3D &transl, const M3D &rot, const V3D &gyr,
   cov_bias_gyr = gyr_bias; //角速度bias的协方差
   cov_bias_acc = acc_bias; //加速度bias的协方差
 }
+void ImuProcessor::Reset()   //重置参数
+{
+  // ROS_WARN("Reset ImuProcess");
+  mean_acc = V3D(0, 0, -1.0);
+  mean_gyr = V3D(0, 0, 0);
+  last_gyr = V3D(0, 0, 0);
+  is_need_init = true;                   //是否需要初始化imu
+
+  init_iter_num = 1;                       //初始化迭代次数
+  imu_pose_deque.clear();                         // imu位姿清空
+  last_imu.reset(new sensor_msgs::Imu()); //上一帧imu初始化
+
+}
 
 //初始化IMU：初始化卡尔曼滤波器
  void ImuProcessor::initImu(const MeasureGroup &meas, esekfom::esekf &kf_state, int &N)
  {
     V3D cur_acc;
     V3D cur_gyr;
+
+    if (is_first_frame) //如果为第一帧IMU
+    {
+      Reset();    //重置IMU参数
+      N = 1;      //将迭代次数置1
+      is_first_frame = false;
+      const auto &imu_acc = meas.imu.front()->linear_acceleration;    //IMU初始时刻的加速度
+      const auto &gyr_acc = meas.imu.front()->angular_velocity;       //IMU初始时刻的角速度
+      mean_acc << imu_acc.x, imu_acc.y, imu_acc.z;              //第一帧加速度值作为初始化均值
+      mean_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;              //第一帧角速度值作为初始化均值
+    }
 
     for (const auto &imu : meas.imu)
     {
@@ -208,16 +234,17 @@ void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, P
 
     if(is_need_init)
     {
-        int N = 1;
-        initImu(meas, kf_state, N);
+        initImu(meas, kf_state, init_iter_num);
+        last_imu  = meas.imu.back();
 
-        if(N > MAX_INI_COUNT)
+        if(init_iter_num > MAX_INI_COUNT)
         {
             is_need_init = false;
+            cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2);
+      
+            cov_acc = cov_acc_scale;
+            cov_gyr = cov_gyr_scale;
 
-            //使用外部设置的参数作为初始化的协方差
-            //cov_acc = cov_acc_scale;
-            //cov_gyr = cov_gyr_scale;
             ROS_INFO("IMU Initial Done");
 
         }
