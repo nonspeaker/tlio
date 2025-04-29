@@ -185,7 +185,7 @@ void PointCloudProcessor::oust64_handler(const sensor_msgs::PointCloud2::ConstPt
     pcl::fromROSMsg(*msg, pl_orig);
     int plsize = pl_orig.size();
     pl_surf.reserve(plsize);
-    //#pragma omp parallel for
+    #pragma omp parallel for
     for (int i = 0; i < pl_orig.points.size(); i++)
     {
         if (i % point_filter_num != 0)

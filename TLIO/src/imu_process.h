@@ -14,7 +14,7 @@ public:
 
     void set_params(const V3D &transl, const M3D &rot, const V3D &gyr, const V3D &acc, const V3D &gyr_bias, const V3D &acc_bias);
     void process(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI::Ptr &pcl_out);
-    void Reset();   //重置参数
+
 private:
 
     bool is_need_init;                  //是否需要初始化
@@ -41,8 +41,16 @@ private:
 
     double last_lidar_end_time;         //上一雷达帧结束的时间戳
 
+
+    void Reset();   //重置参数
     void initImu(const MeasureGroup &meas, esekfom::esekf &kf_state, int &N);
-    void undistortPointCloud(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI &pcl_out);
+
+    void preintegrateIMU(const MeasureGroup &meas, esekfom::esekf &kf_state);
+
+    void removeDistortionByIMU(PointCloudXYZI &pcl_out, esekfom::esekf &kf_state);
+
+
+
 };
 
 

@@ -63,14 +63,11 @@ MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
     }
     odometryBuffer.clear(); // 初始化缓冲区
 
-    
 }
 
 
 MessagePublisher::~MessagePublisher() {
-    if (odom_file.is_open()) {
-        odom_file.close(); // 在析构函数中关闭文件
-    }
+
 }
 
 void MessagePublisher::publishOdometry(const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp)
@@ -177,6 +174,8 @@ void MessagePublisher::writeOdometryToFile() {
                       << odometry.pose.pose.orientation.z << ","
                       << odometry.pose.pose.orientation.w << "\n"; // 旋转（四元数）
         }
+        odom_file.flush(); // 刷新缓冲区，确保数据写入磁盘
+        odom_file.close(); // 关闭文件
         ROS_INFO("Odometry data successfully written to file: /home/tuyanchen/Livox2/TLIO/src/TLIO/evaluate/odometry.csv");
     } else {
         ROS_WARN("Failed to write odometry data: file is not open.");

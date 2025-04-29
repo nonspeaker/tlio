@@ -101,121 +101,110 @@ void ImuProcessor::Reset()   //重置参数
     last_imu = meas.imu.back(); //更新上一个IMU数据
 }
 
-//消除每个激光雷达点的运动失真（反向传播）
-void ImuProcessor::undistortPointCloud(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI &pcl_out)
-{
-    auto imu_deque = meas.imu;   //获取IMU队列
-    imu_deque.push_front(last_imu); //将上一帧尾部的IMU数据插入到IMU队列的开头
 
-    const double &imu_end_time = imu_deque.back()->header.stamp.toSec(); //当前帧尾部的imu时间戳
-    const double &pcl_beg_time = meas.lidar_beg_time;      //点云开始的时间戳
+void ImuProcessor::preintegrateIMU(const MeasureGroup &meas, esekfom::esekf &kf_state) {
+    auto imu_deque = meas.imu;   // 获取 IMU 队列
+    imu_deque.push_front(last_imu); // 将上一帧尾部的 IMU 数据插入到 IMU 队列的开头
+
+    const double &imu_end_time = imu_deque.back()->header.stamp.toSec(); // 当前帧尾部的 IMU 时间戳
+    const double &pcl_beg_time = meas.lidar_beg_time;      // 点云开始的时间戳
     const double &pcl_end_time = meas.lidar_end_time;      //点云结束的时间戳
 
-    pcl_out = *(meas.lidar);    //将当前帧的点云赋值给pcl_out
-    sort(pcl_out.points.begin(), pcl_out.points.end(), time_list);//根据每个点的时间戳对点云重排序
-
-    state_ikfom imu_state = kf_state.get_x();  //获取上一次KF估计的后验状态作为本次IMU预测的初始状态
-    imu_pose_deque.clear(); //清空IMU位姿队列
+    state_ikfom imu_state = kf_state.get_x();  // 获取上一次 KF 估计的后验状态作为本次 IMU 预测的初始状态
+    imu_pose_deque.clear(); // 清空 IMU 位姿队列
     imu_pose_deque.push_back(set_pose6d(0.0, last_acc, last_gyr, imu_state.vel, imu_state.pos, imu_state.rot.matrix()));
-    //将初始状态加入到IMU位姿队列中，包含有时间间隔，上一帧的加速度，角速度，速度，位置，旋转矩阵
 
-    V3D avr_acc; //平均角速度
-    V3D avr_gyr; //平均加速度
+    V3D avr_acc; // 平均加速度
+    V3D avr_gyr; // 平均角速度
 
     double dt = 0;
-
     input_ikfom in;
-    //遍历IMU队列里的每一个IMU数据，计算对应的IMU位姿，放入IMU位姿队列中
-    for (auto it_imu = imu_deque.begin(); it_imu < (imu_deque.end() - 1); it_imu++)
-    {
-        auto &&head = *(it_imu);        //拿到当前imu数据
-        auto &&tail = *(it_imu + 1);    //拿到下一个imu数据
-        //判断时间先后顺序：下一帧imu时间戳是否小于上一帧雷达结束时间戳 不符合直接continue
-        if(tail->header.stamp.toSec() < last_lidar_end_time) 
+
+    // 遍历 IMU 队列，计算 IMU 位姿
+    for (auto it_imu = imu_deque.begin(); it_imu < (imu_deque.end() - 1); it_imu++) {
+        auto &&head = *(it_imu);        // 当前 IMU 数据
+        auto &&tail = *(it_imu + 1);    // 下一帧 IMU 数据
+
+        if (tail->header.stamp.toSec() < last_lidar_end_time) 
             continue;
 
-        avr_gyr << 0.5 * (head->angular_velocity.x + tail->angular_velocity.x),      // 中值积分
-        0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
-        0.5 * (head->angular_velocity.z + tail->angular_velocity.z);
+        avr_gyr << 0.5 * (head->angular_velocity.x + tail->angular_velocity.x), //中值积分
+                   0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
+                   0.5 * (head->angular_velocity.z + tail->angular_velocity.z);
         avr_acc << 0.5 * (head->linear_acceleration.x + tail->linear_acceleration.x),
-        0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
-        0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
+                   0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
+                   0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
 
-        avr_acc  = avr_acc * G_m_s2 / mean_acc.norm(); //通过重力数值对加速度进行调整(除上初始化的IMU大小*9.8)
+        avr_acc = avr_acc * G_m_s2 / mean_acc.norm(); // 调整加速度
 
-        //如果IMU开始时刻早于上次雷达最晚时刻(因为将上次最后一个IMU插入到此次开头了，所以会出现一次这种情况)
-        if(head->header.stamp.toSec() < last_lidar_end_time)
-        {
-            dt = tail->header.stamp.toSec() - last_lidar_end_time; //从上次雷达时刻末尾开始传播 计算与此次IMU结尾之间的时间差
+        if (head->header.stamp.toSec() < last_lidar_end_time) {
+            dt = tail->header.stamp.toSec() - last_lidar_end_time;
+        } else {
+            dt = tail->header.stamp.toSec() - head->header.stamp.toSec();
         }
-        else
-        {
-            dt = tail->header.stamp.toSec() - head->header.stamp.toSec();     //两个IMU时刻之间的时间间隔
-        }
-        in.acc = avr_acc;// 两帧IMU的中值作为输入in  用于前向传播
+
+        in.acc = avr_acc;
         in.gyro = avr_gyr;
 
-         // 配置协方差矩阵
-        Q.block<3, 3>(0, 0).diagonal() = cov_gyr;         //角速度的协方差
-        Q.block<3, 3>(3, 3).diagonal() = cov_acc;         //加速度的协方差
-        Q.block<3, 3>(6, 6).diagonal() = cov_bias_gyr;    //角速度bias的协方差
-        Q.block<3, 3>(9, 9).diagonal() = cov_bias_acc;    //加速度bias的协方差
-    
-        kf_state.predict(dt, Q, in);    // IMU前向传播，每次传播的时间间隔为dt
-        imu_state = kf_state.get_x();   //更新IMU状态为积分后的状态
-        //更新imu上一帧的角速度 = 后一帧角速度-bias  
+        // 配置协方差矩阵
+        Q.block<3, 3>(0, 0).diagonal() = cov_gyr;
+        Q.block<3, 3>(3, 3).diagonal() = cov_acc;
+        Q.block<3, 3>(6, 6).diagonal() = cov_bias_gyr;
+        Q.block<3, 3>(9, 9).diagonal() = cov_bias_acc;
+
+        kf_state.predict(dt, Q, in);    // IMU 前向传播
+        imu_state = kf_state.get_x();   // 更新 IMU 状态
 
         last_gyr = V3D(tail->angular_velocity.x, tail->angular_velocity.y, tail->angular_velocity.z) - imu_state.bg;
-        //更新imu上一帧的加速度 = R*(加速度-bias) - g
-        last_acc = V3D(tail->linear_acceleration.x, tail->linear_acceleration.y, tail->linear_acceleration.z) * G_m_s2 / mean_acc.norm();  
+        last_acc = V3D(tail->linear_acceleration.x, tail->linear_acceleration.y, tail->linear_acceleration.z) * G_m_s2 / mean_acc.norm();
         last_acc = imu_state.rot * (last_acc - imu_state.ba) + imu_state.grav;
- 
-        double &&offs_t = tail->header.stamp.toSec() - pcl_beg_time;    //后一个IMU时刻距离此次雷达开始的时间间隔
-        imu_pose_deque.push_back( set_pose6d( offs_t, last_acc, last_gyr, imu_state.vel, imu_state.pos, imu_state.rot.matrix() ) );
 
+        double offs_t = tail->header.stamp.toSec() - pcl_beg_time;
+        imu_pose_deque.push_back(set_pose6d(offs_t, last_acc, last_gyr, imu_state.vel, imu_state.pos, imu_state.rot.matrix()));
     }
-    // 把最后一帧IMU测量也补上
+
+    // 补上最后一帧 IMU 测量
     dt = abs(pcl_end_time - imu_end_time);
     kf_state.predict(dt, Q, in);
-    imu_state = kf_state.get_x();   
 
-    last_imu = meas.imu.back();              //保存最后一个IMU测量，以便于下一帧使用
-    last_lidar_end_time = pcl_end_time;       //保存这一帧最后一个雷达测量的结束时间，以便于下一帧使用
+    last_imu = meas.imu.back();          // 保存最后一个 IMU 测量
+    last_lidar_end_time = pcl_end_time; // 保存雷达结束时间
+}
 
-    /***消除每个激光雷达点的失真（反向传播）***/
-    if (pcl_out.points.begin() == pcl_out.points.end()) return;
-    auto it_pcl = pcl_out.points.end() - 1;  //指针变量
 
-    M3D temp_rot;
-    V3D temp_acc;
-    V3D temp_vel;
-    V3D temp_pos;
+void ImuProcessor::removeDistortionByIMU(PointCloudXYZI &pcl_out, esekfom::esekf &kf_state) {
+    if (pcl_out.points.empty()) return;
 
-    //遍历imu_pose_deque队列，从最后一个IMU位姿开始，逐个修正点云的位置
-    for (auto it_kp = imu_pose_deque.end() - 1; it_kp != imu_pose_deque.begin(); it_kp--)
-    {
-        auto head = it_kp - 1; //前一帧IMU位姿
-        auto tail = it_kp;     //后一帧IMU位姿
-        temp_rot<<MAT_FROM_ARRAY(head->rot);     //拿到前一帧的IMU旋转矩阵
-        temp_vel<<VEC_FROM_ARRAY(head->vel);     //拿到前一帧的IMU速度
-        temp_pos<<VEC_FROM_ARRAY(head->pos);     //拿到前一帧的IMU位置
+    auto it_pcl = pcl_out.points.end() - 1;  // 从点云末尾开始
+    state_ikfom imu_state = kf_state.get_x();
 
-        temp_acc<<VEC_FROM_ARRAY(tail->acc);     //拿到后一帧的IMU加速度
-        avr_gyr<<VEC_FROM_ARRAY(tail->gyr);      //拿到后一帧的IMU角速度
+    M3D rot_prev;  // 前一个旋转矩阵
+    V3D vel_prev;  // 前一个速度
+    V3D pos_prev;  // 前一个位置
+    
+    V3D acc_next;  // 后一个加速度
+    V3D gyr_next;  // 后一个角速度
 
-        //之前点云按照时间从小到大排序过，imu_pose也同样是按照时间从小到大push进入的
-        //此时从IMUpose的末尾开始循环，也就是从时间最大处开始，因此只需要判断点云时间需>IMU head时刻即可，不需要判断点云时间<IMU tail
-        for(; it_pcl->curvature / double(1000) > head->offset_time; it_pcl --)
-        {
-            dt = it_pcl->curvature / double(1000) - head->offset_time;    //点到IMU开始时刻的时间间隔 
+    // 遍历 imu_pose_deque，从最后一个 IMU 位姿开始修正点云
+    for (auto it_kp = imu_pose_deque.end() - 1; it_kp != imu_pose_deque.begin(); it_kp--) {
+        auto head = it_kp - 1; // 前一帧 IMU 位姿
+        auto tail = it_kp;     // 后一帧 IMU 位姿
 
-            /*    P_compensate = R_imu_e ^ T * (R_i * P_i + T_ei)    */
+        rot_prev << MAT_FROM_ARRAY(head->rot);
+        vel_prev << VEC_FROM_ARRAY(head->vel);
+        pos_prev << VEC_FROM_ARRAY(head->pos);
 
-            M3D R_i(temp_rot * Sophus::SO3::exp(avr_gyr * dt).matrix() );   //点it_pcl所在时刻的旋转：前一帧的IMU旋转矩阵 * exp(后一帧角速度*dt)   
-        
-            V3D P_i(it_pcl->x, it_pcl->y, it_pcl->z);   //点所在时刻的位置(雷达坐标系下)
-            V3D T_ei(temp_pos + temp_vel * dt + 0.5 * temp_acc * dt * dt - imu_state.pos);   //从点所在的世界位置-雷达末尾世界位置
-            V3D P_compensate = imu_state.offset_R_L_I.matrix().transpose() * (imu_state.rot.matrix().transpose() * (R_i * (imu_state.offset_R_L_I.matrix() * P_i + imu_state.offset_T_L_I) + T_ei) - imu_state.offset_T_L_I);
+        acc_next << VEC_FROM_ARRAY(tail->acc);
+        gyr_next << VEC_FROM_ARRAY(tail->gyr);
+
+        for (; it_pcl->curvature / double(1000) > head->offset_time; it_pcl--) {
+            double dt = it_pcl->curvature / double(1000) - head->offset_time;
+
+            M3D R_i(rot_prev * Sophus::SO3::exp(gyr_next * dt).matrix());
+            V3D P_i(it_pcl->x, it_pcl->y, it_pcl->z);
+            V3D T_ei(pos_prev + vel_prev * dt + 0.5 * acc_next * dt * dt - imu_state.pos);
+            V3D P_compensate = imu_state.offset_R_L_I.matrix().transpose() *
+                               (imu_state.rot.matrix().transpose() * (R_i * (imu_state.offset_R_L_I.matrix() * P_i + imu_state.offset_T_L_I) + T_ei) - imu_state.offset_T_L_I);
 
             it_pcl->x = P_compensate(0);
             it_pcl->y = P_compensate(1);
@@ -224,8 +213,8 @@ void ImuProcessor::undistortPointCloud(const MeasureGroup &meas, esekfom::esekf 
             if (it_pcl == pcl_out.points.begin()) break;
         }
     }
-
 }
+
 
 void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, PointCloudXYZI::Ptr &pcl_out)
 {
@@ -252,6 +241,16 @@ void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, P
         return;
     }
 
-    undistortPointCloud(meas, kf_state, *pcl_out);
+    // 将 meas.lidar 的值赋给 pcl_out
+    pcl_out = meas.lidar;
+
+    // 对点云进行重排序
+    sort(pcl_out->points.begin(), pcl_out->points.end(), time_list); //curvature 中存放了时间戳
+
+    // IMU预积分
+    preintegrateIMU(meas, kf_state);
+
+    // 点云去畸变
+    removeDistortionByIMU(*pcl_out, kf_state);
 
 }   

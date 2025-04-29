@@ -40,7 +40,7 @@ void LocalMapManager::transformToWorld(const PointCloudXYZI::Ptr &inputCloud, Po
 {
     int size = inputCloud->points.size();
     outputCloud->resize(size);
-    //#pragma omp parallel for
+    #pragma omp parallel for
     for(int i = 0; i < size; ++i)
         pointLidarToWorld(inputCloud->points[i], outputCloud->points[i], state);
 
