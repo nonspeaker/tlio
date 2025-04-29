@@ -20,7 +20,7 @@ class MessageReceiver {
                 subLidar = nh.subscribe(lidar_topic, 200000, &MessageReceiver::standardLidarCallback, this);
             subImu = nh.subscribe(imu_topic, 200000, &MessageReceiver::imuCallback, this);
         }
-    
+        void setParameters(bool timeSync, double timeDiff);
         bool syncPackages(MeasureGroup &meas, double &lidarEndTime);
     
     private:
@@ -38,14 +38,16 @@ class MessageReceiver {
         std::mutex bufferMutex;
         std::condition_variable bufferCondition;
     
+        bool timeSyncEnabled = false;
+        double externalTimeOffset = -0.1;
 
 
+
+        double softwaretimesyncoffset = 0.0;
         double lastTimestampLidar = 0.0;
         double lastTimestampImu = -1.0;
-        bool timeSyncEnabled = false;
-        double timeDiffLidarToImu = 0.0;
         bool timeDiffSetFlag = false;
-    
+
         int scan_num = 0;
         double lidarMeanScanTime = 0.0; //帧间隔时间
 
@@ -53,6 +55,14 @@ class MessageReceiver {
 
         std::shared_ptr<PointCloudProcessor> pclProcessor;
     };
+
+    void MessageReceiver::setParameters(bool timeSync, double timeDiff)
+    {
+        timeSyncEnabled = timeSync;
+        externalTimeOffset = timeDiff;
+    }
+
+
 
     void MessageReceiver::standardLidarCallback(const sensor_msgs::PointCloud2::ConstPtr &msg)
     {
@@ -62,13 +72,14 @@ class MessageReceiver {
             ROS_ERROR("Lidar loop back, clearing buffer");
             lidarBuffer.clear();
         }
-        lastTimestampLidar = msg->header.stamp.toSec();
-    
         PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
         pclProcessor->process(msg, ptr);
         lidarBuffer.push_back(ptr);
+
+
+        lastTimestampLidar = msg->header.stamp.toSec();
         timeBuffer.push_back(lastTimestampLidar);
-    
+
         bufferCondition.notify_all();
     }
 
@@ -81,6 +92,20 @@ class MessageReceiver {
             lidarBuffer.clear();
         }
         lastTimestampLidar = msg->header.stamp.toSec();
+
+
+        if (!timeSyncEnabled && abs(lastTimestampImu - lastTimestampLidar) > 10.0 && !imuBuffer.empty() && !lidarBuffer.empty())
+        {
+            printf("IMU and LiDAR not Synced, IMU time: %lf, lidar header time: %lf \n", lastTimestampImu, lastTimestampLidar);
+        }
+    
+        if (timeSyncEnabled && !timeDiffSetFlag && abs(lastTimestampLidar - lastTimestampImu) > 1 && !imuBuffer.empty())
+        {
+            timeDiffSetFlag = true;
+            softwaretimesyncoffset = lastTimestampLidar + 0.1 - lastTimestampImu;
+            printf("Self sync IMU and LiDAR, time diff is %.10lf \n", softwaretimesyncoffset);
+        }
+
     
         PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
         pclProcessor->process(msg, ptr);
@@ -93,18 +118,29 @@ class MessageReceiver {
     void MessageReceiver::imuCallback(const sensor_msgs::Imu::ConstPtr &msg) {
         std::lock_guard<std::mutex> lock(bufferMutex);
     
-        double timestamp = msg->header.stamp.toSec();
+        sensor_msgs::Imu::Ptr imu_msg(new sensor_msgs::Imu(*msg));
+
+        if (abs(softwaretimesyncoffset) > 0.1 && timeSyncEnabled)
+        {
+            imu_msg->header.stamp =
+                ros::Time().fromSec(softwaretimesyncoffset + msg->header.stamp.toSec());
+        }
+        imu_msg->header.stamp = ros::Time().fromSec(msg->header.stamp.toSec() - externalTimeOffset);
+
+        double timestamp = imu_msg->header.stamp.toSec();
+
         if (timestamp < lastTimestampImu) {
             ROS_WARN("IMU loop back, clearing buffer");
             imuBuffer.clear();
         }
         lastTimestampImu = timestamp;
-        imuBuffer.push_back(msg);
+        imuBuffer.push_back(imu_msg);
+        
         bufferCondition.notify_all();
     }
     
     bool MessageReceiver::syncPackages(MeasureGroup &meas, double &lidarEndTime) {
-        std::unique_lock<std::mutex> lock(bufferMutex);
+        //std::unique_lock<std::mutex> lock(bufferMutex);
     
         if (lidarBuffer.empty() || imuBuffer.empty()) {
             return false;

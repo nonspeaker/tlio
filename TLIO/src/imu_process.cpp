@@ -84,6 +84,7 @@ void ImuProcessor::Reset()   //重置参数
     //与卡尔曼滤波器的相关初始化
     state_ikfom init_state = kf_state.get_x();
     init_state.grav = - mean_acc / mean_acc.norm() * G_m_s2;    //重力加速度分量（测量的平均速度的单位方向向量 * 重力加速度预设值)
+    std::cout << "grav: " << init_state.grav.transpose() << std::endl;
     init_state.bg = mean_gyr;                                   //角速度偏置（测量的平均角速度）
     init_state.offset_T_L_I = Lidar_T_wrt_IMU;                  //Lidar相对于IMU的平移外参
     init_state.offset_R_L_I = Sophus::SO3(Lidar_R_wrt_IMU);     //Lidar相对于IMU的旋转外参
@@ -236,6 +237,7 @@ void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, P
     {
         initImu(meas, kf_state, init_iter_num);
 
+        is_need_init = true;
         if(init_iter_num > MAX_INI_COUNT)
         {
             is_need_init = false;

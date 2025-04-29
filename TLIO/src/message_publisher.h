@@ -19,6 +19,7 @@ public:
     void publishPath(nav_msgs::Path &path, const state_ikfom& state, double timestamp);
     void publishLoopConstraints(const visualization_msgs::MarkerArray &markerArray);
 
+    void writeOdometryToFile(); // 添加一个方法用于将内存中的数据写入文件
 
 private:
     ros::Publisher pubOdometry;
@@ -29,6 +30,7 @@ private:
 
     // 写出里程计信息到文件
     std::ofstream odom_file;
+    std::vector<nav_msgs::Odometry> odometryBuffer; // 用于存储里程计信息的容器
 };
 
 
@@ -48,11 +50,14 @@ MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
                   << "field.pose.pose.orientation.x,field.pose.pose.orientation.y,field.pose.pose.orientation.z,field.pose.pose.orientation.w,"
                   << "field.twist.twist.linear.x,field.twist.twist.linear.y,field.twist.twist.linear.z,"
                   << "field.twist.twist.angular.x,field.twist.twist.angular.y,field.twist.twist.angular.z\n";
+
     }
+    odometryBuffer.clear(); // 初始化缓冲区
 }
 
 
 MessagePublisher::~MessagePublisher() {
+    writeOdometryToFile(); // 写入文件
     if (odom_file.is_open()) {
         odom_file.close(); // 在析构函数中关闭文件
     }
@@ -78,6 +83,9 @@ void MessagePublisher::publishOdometry(nav_msgs::Odometry& odometry , const stat
     odometry.pose.pose.orientation.w = q_.coeffs()[3];
 
     pubOdometry.publish(odometry);
+
+    odometryBuffer.push_back(odometry);
+
     for (int i = 0; i < 6; i++)
     {
         int k = i < 3 ? i + 3 : i - 3;
@@ -100,30 +108,6 @@ void MessagePublisher::publishOdometry(nav_msgs::Odometry& odometry , const stat
     transform.setRotation(q);
     br.sendTransform(tf::StampedTransform(transform, odometry.header.stamp, "camera_init", "lidar"));
 
-
-    if (odom_file.is_open()) {
-        // 时间戳保留 14 位小数
-        odom_file << std::scientific << std::setprecision(14)
-                  << odometry.header.stamp.toNSec() << "," // 时间戳（纳秒）
-                  << odometry.header.seq << ","           // 序列号
-                  << odometry.header.stamp.toNSec() << ","; // 时间戳（纳秒）
-    
-        // 其他字段保留 15 位小数
-        odom_file << std::setprecision(15)
-                  << odometry.pose.pose.position.x << ","
-                  << odometry.pose.pose.position.y << ","
-                  << odometry.pose.pose.position.z << "," // 位置
-                  << odometry.pose.pose.orientation.x << ","
-                  << odometry.pose.pose.orientation.y << ","
-                  << odometry.pose.pose.orientation.z << ","
-                  << odometry.pose.pose.orientation.w << "," // 旋转（四元数）
-                  << odometry.twist.twist.linear.x << ","
-                  << odometry.twist.twist.linear.y << ","
-                  << odometry.twist.twist.linear.z << "," // 线速度
-                  << odometry.twist.twist.angular.x << ","
-                  << odometry.twist.twist.angular.y << ","
-                  << odometry.twist.twist.angular.z << "\n"; // 角速度
-    }
 }
 
 
@@ -166,3 +150,31 @@ void MessagePublisher::publishLoopConstraints(const visualization_msgs::MarkerAr
 }
 
 
+void MessagePublisher::writeOdometryToFile() {
+    if (odom_file.is_open()) {
+        for (const auto& odometry : odometryBuffer) {
+            odom_file << std::scientific << std::setprecision(14)
+                      << odometry.header.stamp.toNSec() << "," // 时间戳（纳秒）
+                      << odometry.header.seq << ","           // 序列号
+                      << odometry.header.stamp.toNSec() << ","; // 时间戳（纳秒）
+
+            odom_file << std::setprecision(15)
+                      << odometry.pose.pose.position.x << ","
+                      << odometry.pose.pose.position.y << ","
+                      << odometry.pose.pose.position.z << "," // 位置
+                      << odometry.pose.pose.orientation.x << ","
+                      << odometry.pose.pose.orientation.y << ","
+                      << odometry.pose.pose.orientation.z << ","
+                      << odometry.pose.pose.orientation.w << "," // 旋转（四元数）
+                      << odometry.twist.twist.linear.x << ","
+                      << odometry.twist.twist.linear.y << ","
+                      << odometry.twist.twist.linear.z << "," // 线速度
+                      << odometry.twist.twist.angular.x << ","
+                      << odometry.twist.twist.angular.y << ","
+                      << odometry.twist.twist.angular.z << "\n"; // 角速度
+        }
+        ROS_INFO("Odometry data successfully written to file: /home/tuyanchen/Livox2/TLIO/src/TLIO/evaluate/odometry.csv");
+    } else {
+        ROS_WARN("Failed to write odometry data: file is not open.");
+    }
+}

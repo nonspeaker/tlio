@@ -143,8 +143,8 @@ PointCloudXYZI::Ptr feats_down_world(new PointCloudXYZI());//当前帧去畸变�
 PointCloudXYZI::Ptr feats_publish(new PointCloudXYZI());//发布出去的点云
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());//保存的点云
 
-std::shared_ptr<GTSAMOptimizer> gtsamOptimizer(new GTSAMOptimizer(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
-std::shared_ptr<LoopClosure> loopClosure(new LoopClosure(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
+//std::shared_ptr<GTSAMOptimizer> gtsamOptimizer(new GTSAMOptimizer(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
+//std::shared_ptr<LoopClosure> loopClosure(new LoopClosure(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
 std::shared_ptr<PointCloudProcessor> pclProcessor(new PointCloudProcessor());
 std::shared_ptr<ImuProcessor> imuProcessor(new ImuProcessor());
 std::shared_ptr<LocalMapManager> localMapManager(new LocalMapManager());
@@ -166,7 +166,7 @@ void SigHandle(int sig)
     sig_buffer.notify_all();
 }
 
-
+/*
 //回环检测线程
 void loopClosureThread(MessagePublisher &publisher)
 {
@@ -186,7 +186,7 @@ void loopClosureThread(MessagePublisher &publisher)
 
         publisher.publishLoopConstraints(markerArray);
     }
-}
+}*/
 
 int main(int argc, char** argv) 
 {
@@ -221,6 +221,18 @@ int main(int argc, char** argv)
 
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);                         //是否保存点云  
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);                          //点云保存间隔
+
+
+    nh.param<bool>("feature_extract_enable", feature_enabled, false);  //特征提取开关
+    nh.param<int>("point_filter_num", point_filter_num, 2);            //点云滤波器数量
+    nh.param<int>("max_iteration", max_iteration, 4);                                //最大迭代次数
+    nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);                 //平面点滤波器大小
+    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);                   //地图滤波大小
+    nh.param<double>("cube_side_length", cube_len, 200);                             //地图立方体边长
+    nh.param<bool>("runtime_pos_log_enable", runtime_pos_log_enable, 0);             //是否启用运行时位置日志
+
+    nh.param<double>("filter_publish_map", filter_publish_map, 0.5);                 //发布点云大小
+
     //voxel filter paprams
     //nh.param<float>("odometrySurfLeafSize", odometrySurfLeafSize, 0.2);                 //odometry滤波器大小 
     //nh.param<float>("mappingCornerLeafSize", mappingCornerLeafSize, 0.2);               //mapping角点滤波器大小
@@ -257,22 +269,13 @@ int main(int argc, char** argv)
     nh.param<std::string>("savePCDDirectory", savePCDDirectory, "/Downloads/LOAM/"); //保存点云目录0
 
 
-    nh.param<bool>("feature_extract_enable", feature_enabled, false);  //特征提取开关
-    nh.param<int>("point_filter_num", point_filter_num, 2);            //点云滤波器数量
-    nh.param<int>("max_iteration", max_iteration, 4);                                //最大迭代次数
-    nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);                 //平面点滤波器大小
-    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);                   //地图滤波大小
-    nh.param<double>("cube_side_length", cube_len, 200);                             //地图立方体边长
-    nh.param<bool>("runtime_pos_log_enable", runtime_pos_log_enable, 0);             //是否启用运行时位置日志
-
-    nh.param<double>("filter_publish_map", filter_publish_map, 0.5);                 //发布点云大小
 
     //初始化地图时间戳和帧
     path.header.stamp = ros::Time::now();
     path.header.frame_id = "camera_init";
 
-    loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
-    gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
+    //loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
+    //gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
     pclProcessor->setParams(lidar_type, scan_line, scan_rate, time_unit, blind, feature_enabled, point_filter_num);
     localMapManager->setParams(det_range, filter_size_map_min, cube_len);
     //IMU处理器参数
@@ -294,9 +297,11 @@ int main(int argc, char** argv)
     MessagePublisher publisher(nh);
 
     MessageReceiver receiver(nh, lidar_topic, imu_topic, pclProcessor);
+
+    receiver.setParameters(time_sync_en, time_offset_lidar_to_imu);
  
     // 回环检测线程
-    std::thread loopthread(loopClosureThread, std::ref(publisher));
+    //std::thread loopthread(loopClosureThread, std::ref(publisher));
     while(ros::ok())
     {
 
@@ -355,10 +360,10 @@ int main(int argc, char** argv)
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, feats_down_lidar, ikdtree, Nearest_Points, max_iteration, extrinsic_est_en);
 
            //更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
-            state_point = kf.get_x();
-            Eigen::Vector3d eulerAngle = state_point.rot.matrix().eulerAngles(2,1,0); 
-            gtsamOptimizer->setInitialPose(eulerAngle,state_point.pos, lidar_end_time);
-            gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
+            //state_point = kf.get_x();
+            //Eigen::Vector3d eulerAngle = state_point.rot.matrix().eulerAngles(2,1,0); 
+            //gtsamOptimizer->setInitialPose(eulerAngle,state_point.pos, lidar_end_time);
+            //gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
  
             state_point = kf.get_x();
 
