@@ -27,10 +27,9 @@ public:
     void transformToWorld(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state);
 
     void updateLocalMapRange(const Eigen::Vector3d &lidarPosition, KD_TREE &ikdtree);
-    void updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, KD_TREE &ikdtree, 
+    void updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, KD_TREE &ikdtree, 
                               const vector<PointVector> &nearestPoints, const state_ikfom &state, bool &is_ekf_init);
-    void initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, 
-                          const state_ikfom &state);
+    void initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, const state_ikfom &state);
     void savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename);
 
 private:

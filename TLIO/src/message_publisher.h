@@ -14,14 +14,18 @@ class MessagePublisher {
 public:
     MessagePublisher(ros::NodeHandle &nh);
     ~MessagePublisher();
-    void publishOdometry(nav_msgs::Odometry& odometry , const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp);
+    void publishOdometry(const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp);
     void publishPointCloud(const PointCloudXYZI::Ptr &cloud, double timestamp);
-    void publishPath(nav_msgs::Path &path, const state_ikfom& state, double timestamp);
+    void publishPath(const state_ikfom& state, double timestamp);
     void publishLoopConstraints(const visualization_msgs::MarkerArray &markerArray);
 
     void writeOdometryToFile(); // 添加一个方法用于将内存中的数据写入文件
 
 private:
+
+    nav_msgs::Path path;//lidar移动路径信息的消息
+    nav_msgs::Odometry odometry;//建图后里程计的消息
+
     ros::Publisher pubOdometry;
     ros::Publisher pubPointCloudWorld;
     ros::Publisher pubPath;
@@ -35,6 +39,11 @@ private:
 
 
 MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
+
+    //初始化地图时间戳和帧
+    path.header.stamp = ros::Time::now();
+    path.header.frame_id = "camera_init";
+
     pubOdometry = nh.advertise<nav_msgs::Odometry>("/odometry", 100000);
     pubPointCloudWorld = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
     pubPath = nh.advertise<nav_msgs::Path>("/path", 100000);
@@ -53,6 +62,8 @@ MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
 
     }
     odometryBuffer.clear(); // 初始化缓冲区
+
+    
 }
 
 
@@ -63,7 +74,7 @@ MessagePublisher::~MessagePublisher() {
     }
 }
 
-void MessagePublisher::publishOdometry(nav_msgs::Odometry& odometry , const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp)
+void MessagePublisher::publishOdometry(const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp)
 {
     static uint32_t seq = 0; // 静态变量，序列号从 0 开始
 
@@ -119,7 +130,7 @@ void MessagePublisher::publishPointCloud(const PointCloudXYZI::Ptr &cloud, doubl
     pubPointCloudWorld.publish(cloudMsg);
 }
 
-void MessagePublisher::publishPath(nav_msgs::Path &path, const state_ikfom& state, double timestamp) {
+void MessagePublisher::publishPath(const state_ikfom& state, double timestamp) {
 
     geometry_msgs::PoseStamped poseStamped;
 

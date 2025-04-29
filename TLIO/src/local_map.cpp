@@ -25,7 +25,6 @@ void LocalMapManager::setParams(float detRange, double filterSizeMapMin, float c
 
 }
 
-
 void LocalMapManager::pointLidarToWorld(const PointType &pi, PointType &po, const state_ikfom &state) 
 {
     Eigen::Vector3d p_lidar(pi.x, pi.y, pi.z);
@@ -37,26 +36,38 @@ void LocalMapManager::pointLidarToWorld(const PointType &pi, PointType &po, cons
     po.intensity = pi.intensity;
 }
 
-void LocalMapManager::initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, const state_ikfom &state) {
-    if (ikdtree.Root_Node == nullptr) {
-        ikdtree.set_downsample_param(filter_size_map_min);
-        featsDownWorld->resize(featsDownLidar->points.size());
-
-        for (size_t i = 0; i < featsDownLidar->points.size(); ++i) {
-            pointLidarToWorld(featsDownLidar->points[i], featsDownWorld->points[i], state);
-        }
-
-        ikdtree.Build(featsDownWorld->points);
-    }
-}
-
 void LocalMapManager::transformToWorld(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state)
 {
     int size = inputCloud->points.size();
     outputCloud->resize(size);
+    #pragma omp parallel for
     for(int i = 0; i < size; ++i)
         pointLidarToWorld(inputCloud->points[i], outputCloud->points[i], state);
 
+}
+
+void LocalMapManager::savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename) {
+    if (cloud->empty()) {
+        std::cerr << "Point cloud is empty, cannot save to file: " << filename << std::endl;
+        return;
+    }
+
+    if (pcl::io::savePCDFileBinary(filename, *cloud) == -1) {
+        std::cerr << "Failed to save point cloud to file: " << filename << std::endl;
+    } else {
+        std::cout << "Point cloud saved to file: " << filename << std::endl;
+    }
+}
+
+void LocalMapManager::initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, const state_ikfom &state) {
+
+    ikdtree.set_downsample_param(filter_size_map_min);
+
+    PointCloudXYZI::Ptr featsDownWorld(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云（世界坐标系）
+    
+    transformToWorld(featsDownLidar, featsDownWorld, state);
+
+    ikdtree.Build(featsDownWorld->points);
 }
 
 void LocalMapManager::updateLocalMapRange(const Eigen::Vector3d &lidarPosition, KD_TREE &ikdtree)
@@ -110,7 +121,7 @@ void LocalMapManager::updateLocalMapRange(const Eigen::Vector3d &lidarPosition, 
         int kdtreeDeleteCounter = ikdtree.Delete_Point_Boxes(cubNeedRm); // 删除点
 }
 
-void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, KD_TREE &ikdtree, const vector<PointVector> &nearestPoints, const state_ikfom &state, bool &is_ekf_init) {
+void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, KD_TREE &ikdtree, const vector<PointVector> &nearestPoints, const state_ikfom &state, bool &is_ekf_init) {
     PointVector pointToAdd;
     PointVector pointNoNeedDownsample;
 
@@ -122,7 +133,6 @@ void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownL
         // 转换到世界坐标系
         PointType worldPoint;
         pointLidarToWorld(featsDownLidar->points[i], worldPoint, state);
-        featsDownWorld->points[i] = worldPoint;
 
         if (!nearestPoints[i].empty() && is_ekf_init) {
             const PointVector &pointsNear = nearestPoints[i];
@@ -137,12 +147,15 @@ void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownL
                 pointNoNeedDownsample.push_back(worldPoint);//近邻点与当前点距离大，则不需要下采样，直接添加
                 continue;
             }
-            for (int j = 0; j < NUM_MATCH_POINTS; j++) {
-                if (pointsNear.size() < NUM_MATCH_POINTS)
-                    break;
-                if (calc_dist(pointsNear[j], midPoint) < dist) {
-                    isNeedAdd = false;
-                    break;
+            if (pointsNear.size() >= NUM_MATCH_POINTS)
+            {
+                for (int j = 0; j < NUM_MATCH_POINTS; j++) 
+                {
+                    if (calc_dist(pointsNear[j], midPoint) < dist) 
+                    {
+                        isNeedAdd = false;
+                        break;
+                     }
                 }
             }
             if (isNeedAdd)
@@ -156,15 +169,3 @@ void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownL
     ikdtree.Add_Points(pointNoNeedDownsample, false);
 }
 
-void LocalMapManager::savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename) {
-    if (cloud->empty()) {
-        std::cerr << "Point cloud is empty, cannot save to file: " << filename << std::endl;
-        return;
-    }
-
-    if (pcl::io::savePCDFileBinary(filename, *cloud) == -1) {
-        std::cerr << "Failed to save point cloud to file: " << filename << std::endl;
-    } else {
-        std::cout << "Point cloud saved to file: " << filename << std::endl;
-    }
-}

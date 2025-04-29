@@ -138,7 +138,6 @@ Eigen::Vector3d lidar_position;//当前雷达位置
 
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());//当前帧去畸变后的点云
 PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云pcd_index
-PointCloudXYZI::Ptr feats_down_world(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云（世界坐标系）
 
 PointCloudXYZI::Ptr feats_publish(new PointCloudXYZI());//发布出去的点云
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());//保存的点云
@@ -152,9 +151,8 @@ std::shared_ptr<LocalMapManager> localMapManager(new LocalMapManager());
 KD_TREE ikdtree;
 std::vector<PointVector> Nearest_Points;
 
-nav_msgs::Path path;//lidar移动路径信息的消息
+
 nav_msgs::Path globalPath; //优化后的全局路径
-nav_msgs::Odometry odometry;//建图后里程计的消息
 visualization_msgs::MarkerArray markerArray;//回环检测约束
 
 bool flg_exit = false;
@@ -188,21 +186,18 @@ void loopClosureThread(MessagePublisher &publisher)
     }
 }*/
 
-int main(int argc, char** argv) 
-{
-    ros::init(argc, argv, "tlio");
-    ros::NodeHandle nh;
+void loadParameters(ros::NodeHandle& nh) {
 
     nh.param<string>("common/lidar_topic", lidar_topic, "/livox/lidar");                    //雷达点云话题
     nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");                      //IMU话题
     nh.param<bool>("common/time_sync_en", time_sync_en, false);                         //是否开启时间同步
     nh.param<double>("common/time_offset_lidar_to_imu", time_offset_lidar_to_imu, 0.0); //雷达相对于IMU时间偏移
-    nh.param<int>("preprocess/lidar_type", lidar_type, AVIA);             //雷达类型  
+    nh.param<int>("preprocess/lidar_type", lidar_type, AVIA);                           //雷达类型  
     std::cout << "p_pre->lidar_type " << lidar_type << std::endl;           
-    nh.param<int>("preprocess/scan_line", scan_line, 16);                 //激光雷达线数
+    nh.param<int>("preprocess/scan_line", scan_line, 16);                               //激光雷达线数
     nh.param<int>("preprocess/scan_rate", scan_rate, 10);
-    nh.param<double>("preprocess/blind", blind, 0.01);                    //盲区
-    nh.param<int>("preprocess/timestamp_unit", time_unit, US);            //时间单位
+    nh.param<double>("preprocess/blind", blind, 0.01);                                  //盲区
+    nh.param<int>("preprocess/timestamp_unit", time_unit, US);                          //时间单位
 
     nh.param<double>("mapping/acc_cov", acc_cov, 0.1);                                  //加速度计噪声协方差
     nh.param<double>("mapping/gyr_cov", gyr_cov, 0.1);                                  //陀螺仪噪声协方差
@@ -268,16 +263,14 @@ int main(int argc, char** argv)
     nh.param<bool>("savePCD", savePCD, false);                                       //是否保存点云
     nh.param<std::string>("savePCDDirectory", savePCDDirectory, "/Downloads/LOAM/"); //保存点云目录0
 
-
-
-    //初始化地图时间戳和帧
-    path.header.stamp = ros::Time::now();
-    path.header.frame_id = "camera_init";
+}
+void initializeProcessors() {
 
     //loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
     //gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
     pclProcessor->setParams(lidar_type, scan_line, scan_rate, time_unit, blind, feature_enabled, point_filter_num);
     localMapManager->setParams(det_range, filter_size_map_min, cube_len);
+
     //IMU处理器参数
     Eigen::Vector3d Lidar_T_wrt_IMU = Eigen::Vector3d::Zero();     //激光雷达相对于IMU的平移
     Eigen::Matrix3d Lidar_R_wrt_IMU = Eigen::Matrix3d::Identity(); //激光雷达相对于IMU的旋转
@@ -290,7 +283,18 @@ int main(int argc, char** argv)
     imuProcessor->set_params(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU, Eigen::Vector3d(gyr_cov, gyr_cov, gyr_cov), Eigen::Vector3d(acc_cov, acc_cov, acc_cov),
         Eigen::Vector3d(b_gyr_cov, b_gyr_cov, b_gyr_cov), Eigen::Vector3d(b_acc_cov, b_acc_cov, b_acc_cov));
 
-    
+}
+
+
+int main(int argc, char** argv) 
+{
+    ros::init(argc, argv, "tlio");
+    ros::NodeHandle nh;
+
+    loadParameters(nh);
+
+    initializeProcessors();
+
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);//一秒执行5000次
 
@@ -351,7 +355,7 @@ int main(int argc, char** argv)
 
             //初始化k-d树，存第一帧点云
             if (ikdtree.Root_Node == nullptr) {
-                localMapManager->initializeKdTree(ikdtree, feats_down_lidar, feats_down_world, state_point);
+                localMapManager->initializeKdTree(ikdtree, feats_down_lidar, state_point);
                 continue;
             }
 
@@ -365,19 +369,18 @@ int main(int argc, char** argv)
             //gtsamOptimizer->setInitialPose(eulerAngle,state_point.pos, lidar_end_time);
             //gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
  
-            state_point = kf.get_x();
 
             //发布里程计信息
+            state_point = kf.get_x();
             P = kf.get_P();
-            publisher.publishOdometry(odometry,state_point, P, lidar_end_time);
+            publisher.publishOdometry(state_point, P, lidar_end_time);
+            //发布路径
+            publisher.publishPath(state_point, lidar_end_time);
+
 
             //向地图k-d树里添加点云
-            feats_down_world->resize(feats_down_size);
-            localMapManager->updateMapIncremental(feats_down_lidar, feats_down_world, ikdtree, Nearest_Points, state_point, is_ekf_init);
+            localMapManager->updateMapIncremental(feats_down_lidar, ikdtree, Nearest_Points, state_point, is_ekf_init);
 
- 
-            //发布路径
-            publisher.publishPath(path, state_point, lidar_end_time);
             //发布点云
             localMapManager->transformToWorld(feats_undistort, feats_publish, state_point);
             //pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_publish_map);
