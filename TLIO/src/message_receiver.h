@@ -38,13 +38,17 @@ class MessageReceiver {
         std::mutex bufferMutex;
         std::condition_variable bufferCondition;
     
+
+
         double lastTimestampLidar = 0.0;
         double lastTimestampImu = -1.0;
         bool timeSyncEnabled = false;
         double timeDiffLidarToImu = 0.0;
         bool timeDiffSetFlag = false;
     
-        double lidarMeanScanTime = 0.1; //帧间隔时间
+        int scan_num = 0;
+        double lidarMeanScanTime = 0.0; //帧间隔时间
+
         bool lidarPushed = false;
 
         std::shared_ptr<PointCloudProcessor> pclProcessor;
@@ -112,8 +116,17 @@ class MessageReceiver {
     
             if (meas.lidar->points.size() <= 5) {
                 lidarEndTime = meas.lidar_beg_time + lidarMeanScanTime;
-            } else {
-                lidarEndTime = meas.lidar_beg_time + meas.lidar->points.back().curvature / 1000.0;
+                ROS_WARN("Too few input point cloud!\n");
+            } 
+            else if(meas.lidar->points.back().curvature / double(1000) < 0.5 * lidarMeanScanTime)
+            {
+                lidarEndTime = meas.lidar_beg_time + lidarMeanScanTime;
+            }
+            else
+            {
+                scan_num++;
+                lidarEndTime = meas.lidar_beg_time + meas.lidar->points.back().curvature / double(1000);
+                lidarMeanScanTime += (meas.lidar->points.back().curvature / double(1000) - lidarMeanScanTime) / scan_num;  //注意curvature中存储的是相对第一个点的时间
             }
     
             meas.lidar_end_time = lidarEndTime;

@@ -271,7 +271,6 @@ int main(int argc, char** argv)
     path.header.stamp = ros::Time::now();
     path.header.frame_id = "camera_init";
 
-
     loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
     gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
     pclProcessor->setParams(lidar_type, scan_line, scan_rate, time_unit, blind, feature_enabled, point_filter_num);
@@ -330,7 +329,7 @@ int main(int argc, char** argv)
 
             //获取雷达当前位置，更新局部地图范围，删除k-d树中超出范围的点。
             state_point = kf.get_x();
-            lidar_position = state_point.pos + state_point.rot * state_point.offset_T_L_I;
+            lidar_position = state_point.pos + state_point.rot.matrix() * state_point.offset_T_L_I;
             //检查当前lidar数据时间，与最早lidar数据时间是否足够//判断EKF是否初始化，根据当前雷达数据包的时间与第一帧雷达数据包的时间戳的差值是否小于初始化时间
             is_ekf_init = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
             //根据lidar在世界坐标系下的位置，重新确定局部地图范围，移除距离远的点。
@@ -369,7 +368,7 @@ int main(int argc, char** argv)
 
             //向地图k-d树里添加点云
             feats_down_world->resize(feats_down_size);
-            localMapManager->updateMapIncremental(feats_down_lidar, feats_down_world, ikdtree, Nearest_Points, state_point);
+            localMapManager->updateMapIncremental(feats_down_lidar, feats_down_world, ikdtree, Nearest_Points, state_point, is_ekf_init);
 
  
             //发布路径

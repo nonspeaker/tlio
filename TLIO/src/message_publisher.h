@@ -13,7 +13,7 @@
 class MessagePublisher {
 public:
     MessagePublisher(ros::NodeHandle &nh);
-
+    ~MessagePublisher();
     void publishOdometry(nav_msgs::Odometry& odometry , const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp);
     void publishPointCloud(const PointCloudXYZI::Ptr &cloud, double timestamp);
     void publishPath(nav_msgs::Path &path, const state_ikfom& state, double timestamp);
@@ -26,6 +26,9 @@ private:
     ros::Publisher pubPath;
     ros::Publisher pubPathUpdate;
     ros::Publisher pubLoopConstraintEdge;
+
+    // 写出里程计信息到文件
+    std::ofstream odom_file;
 };
 
 
@@ -35,13 +38,35 @@ MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
     pubPath = nh.advertise<nav_msgs::Path>("/path", 100000);
     pubPathUpdate = nh.advertise<nav_msgs::Path>("path_update", 100000);
     pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("loop_closure_constraints", 1);
+
+
+    // 打开文件并以覆盖模式写入表头
+    odom_file.open("/home/tuyanchen/Livox2/TLIO/src/TLIO/evaluate/odometry.csv", std::ios::out);
+    if (odom_file.is_open()) {
+        odom_file << "%time,field.header.seq,field.header.stamp,"
+                  << "field.pose.pose.position.x,field.pose.pose.position.y,field.pose.pose.position.z,"
+                  << "field.pose.pose.orientation.x,field.pose.pose.orientation.y,field.pose.pose.orientation.z,field.pose.pose.orientation.w,"
+                  << "field.twist.twist.linear.x,field.twist.twist.linear.y,field.twist.twist.linear.z,"
+                  << "field.twist.twist.angular.x,field.twist.twist.angular.y,field.twist.twist.angular.z\n";
+    }
+}
+
+
+MessagePublisher::~MessagePublisher() {
+    if (odom_file.is_open()) {
+        odom_file.close(); // 在析构函数中关闭文件
+    }
 }
 
 void MessagePublisher::publishOdometry(nav_msgs::Odometry& odometry , const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp)
 {
+    static uint32_t seq = 0; // 静态变量，序列号从 0 开始
+
     odometry.header.frame_id = "camera_init";
     odometry.child_frame_id = "lidar";
     odometry.header.stamp = ros::Time().fromSec(timestamp); // ros::Time().fromSec(lidar_end_time);
+    odometry.header.seq = seq++; // 每次调用递增序列号
+
     odometry.pose.pose.position.x = state.pos(0);
     odometry.pose.pose.position.y = state.pos(1);
     odometry.pose.pose.position.z = state.pos(2);
@@ -75,20 +100,6 @@ void MessagePublisher::publishOdometry(nav_msgs::Odometry& odometry , const stat
     transform.setRotation(q);
     br.sendTransform(tf::StampedTransform(transform, odometry.header.stamp, "camera_init", "lidar"));
 
-
-        // 写出里程计信息到文件
-    static std::ofstream odom_file("/home/tuyanchen/Livox2/TLIO/src/TLIO/Log/odom_log.csv", std::ios::app);
-
-    // 添加 CSV 文件的表头（仅在文件首次打开时写入）
-    static bool is_header_written = false;
-    if (!is_header_written && odom_file.is_open()) {
-        odom_file << "%time,field.header.seq,field.header.stamp,"
-                << "field.pose.pose.position.x,field.pose.pose.position.y,field.pose.pose.position.z,"
-                << "field.pose.pose.orientation.x,field.pose.pose.orientation.y,field.pose.pose.orientation.z,field.pose.pose.orientation.w,"
-                << "field.twist.twist.linear.x,field.twist.twist.linear.y,field.twist.twist.linear.z,"
-                << "field.twist.twist.angular.x,field.twist.twist.angular.y,field.twist.twist.angular.z\n";
-        is_header_written = true;
-    }
 
     if (odom_file.is_open()) {
         // 时间戳保留 14 位小数

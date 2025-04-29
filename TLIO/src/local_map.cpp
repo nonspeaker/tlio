@@ -110,7 +110,7 @@ void LocalMapManager::updateLocalMapRange(const Eigen::Vector3d &lidarPosition, 
         int kdtreeDeleteCounter = ikdtree.Delete_Point_Boxes(cubNeedRm); // 删除点
 }
 
-void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, KD_TREE &ikdtree, const vector<PointVector> &nearestPoints, const state_ikfom &state) {
+void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, KD_TREE &ikdtree, const vector<PointVector> &nearestPoints, const state_ikfom &state, bool &is_ekf_init) {
     PointVector pointToAdd;
     PointVector pointNoNeedDownsample;
 
@@ -124,7 +124,7 @@ void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownL
         pointLidarToWorld(featsDownLidar->points[i], worldPoint, state);
         featsDownWorld->points[i] = worldPoint;
 
-        if (!nearestPoints[i].empty()) {
+        if (!nearestPoints[i].empty() && is_ekf_init) {
             const PointVector &pointsNear = nearestPoints[i];
             bool isNeedAdd = true;
             PointType midPoint;

@@ -235,7 +235,6 @@ void ImuProcessor::process(const MeasureGroup &meas, esekfom::esekf &kf_state, P
     if(is_need_init)
     {
         initImu(meas, kf_state, init_iter_num);
-        last_imu  = meas.imu.back();
 
         if(init_iter_num > MAX_INI_COUNT)
         {

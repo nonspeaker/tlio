@@ -28,7 +28,7 @@ public:
 
     void updateLocalMapRange(const Eigen::Vector3d &lidarPosition, KD_TREE &ikdtree);
     void updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, KD_TREE &ikdtree, 
-                              const vector<PointVector> &nearestPoints, const state_ikfom &state);
+                              const vector<PointVector> &nearestPoints, const state_ikfom &state, bool &is_ekf_init);
     void initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, PointCloudXYZI::Ptr &featsDownWorld, 
                           const state_ikfom &state);
     void savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename);
