@@ -142,8 +142,8 @@ PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI());//当前帧去畸变�
 PointCloudXYZI::Ptr feats_publish(new PointCloudXYZI());//发布出去的点云
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());//保存的点云
 
-//std::shared_ptr<GTSAMOptimizer> gtsamOptimizer(new GTSAMOptimizer(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
-//std::shared_ptr<LoopClosure> loopClosure(new LoopClosure(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
+std::shared_ptr<GTSAMOptimizer> gtsamOptimizer(new GTSAMOptimizer(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
+std::shared_ptr<LoopClosure> loopClosure(new LoopClosure(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
 std::shared_ptr<PointCloudProcessor> pclProcessor(new PointCloudProcessor());
 std::shared_ptr<ImuProcessor> imuProcessor(new ImuProcessor());
 std::shared_ptr<LocalMapManager> localMapManager(new LocalMapManager());
@@ -164,7 +164,7 @@ void SigHandle(int sig)
     sig_buffer.notify_all();
 }
 
-/*
+
 //回环检测线程
 void loopClosureThread(MessagePublisher &publisher)
 {
@@ -184,7 +184,7 @@ void loopClosureThread(MessagePublisher &publisher)
 
         publisher.publishLoopConstraints(markerArray);
     }
-}*/
+}
 
 void loadParameters(ros::NodeHandle& nh) {
 
@@ -266,8 +266,8 @@ void loadParameters(ros::NodeHandle& nh) {
 }
 void initializeProcessors() {
 
-    //loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
-    //gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
+    loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
+    gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
     pclProcessor->setParams(lidar_type, scan_line, scan_rate, time_unit, blind, feature_enabled, point_filter_num);
     localMapManager->setParams(det_range, filter_size_map_min, cube_len);
 
@@ -298,14 +298,13 @@ int main(int argc, char** argv)
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);//一秒执行5000次
 
-    MessagePublisher publisher(nh);
+    MessagePublisher* publisher = new MessagePublisher(nh);
+    MessageReceiver* receiver = new MessageReceiver(nh, lidar_topic, imu_topic, pclProcessor);
 
-    MessageReceiver receiver(nh, lidar_topic, imu_topic, pclProcessor);
-
-    receiver.setParameters(time_sync_en, time_offset_lidar_to_imu);
+    receiver->setParameters(time_sync_en, time_offset_lidar_to_imu);
  
     // 回环检测线程
-    //std::thread loopthread(loopClosureThread, std::ref(publisher));
+    std::thread loopthread(loopClosureThread, std::ref(*publisher));
     while(ros::ok())
     {
 
@@ -313,7 +312,7 @@ int main(int argc, char** argv)
             break;
         ros::spinOnce();//处理一次回调函数
 
-        if(receiver.syncPackages(Measures, lidar_end_time))
+        if(receiver->syncPackages(Measures, lidar_end_time))
         {
             if(is_first_scan)
             {
@@ -363,19 +362,19 @@ int main(int argc, char** argv)
             Nearest_Points.resize(feats_down_size); //存储近邻点的vector
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, feats_down_lidar, ikdtree, Nearest_Points, max_iteration, extrinsic_est_en);
 
-           //更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
-            //state_point = kf.get_x();
-            //Eigen::Vector3d eulerAngle = state_point.rot.matrix().eulerAngles(2,1,0); 
-            //gtsamOptimizer->setInitialPose(eulerAngle,state_point.pos, lidar_end_time);
-            //gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
+            //更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
+            state_point = kf.get_x();
+            Eigen::Vector3d eulerAngle = state_point.rot.matrix().eulerAngles(2,1,0); 
+            gtsamOptimizer->setInitialPose(eulerAngle,state_point.pos, lidar_end_time);
+            gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
  
 
             //发布里程计信息
             state_point = kf.get_x();
             P = kf.get_P();
-            publisher.publishOdometry(state_point, P, lidar_end_time);
+            publisher->publishOdometry(state_point, P, lidar_end_time);
             //发布路径
-            publisher.publishPath(state_point, lidar_end_time);
+            publisher->publishPath(state_point, lidar_end_time);
 
 
             //向地图k-d树里添加点云
@@ -388,11 +387,14 @@ int main(int argc, char** argv)
             *pcl_wait_save += *feats_publish;
 
 
-            publisher.publishPointCloud(feats_publish, lidar_end_time);
+            publisher->publishPointCloud(feats_publish, lidar_end_time);
 
         }
         rate.sleep();
     }
+
+    //保存里程计
+    publisher->writeOdometryToFile();
 
     //保存点云
     std::string savePath(string(string(ROOT_DIR) + "PCD/scans") + string(".pcd"));
