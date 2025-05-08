@@ -95,10 +95,10 @@ namespace esekfom
 		}
 
 		//计算每个特征点的残差及H矩阵
-		void h_share_model(dyn_share_datastruct &ekfom_data, PointCloudXYZI::Ptr &feats_down_body,
+		void h_share_model(dyn_share_datastruct &ekfom_data, PointCloudXYZI::Ptr &feats_down_lidar,
 						   KD_TREE &ikdtree, vector<PointVector> &Nearest_Points, bool extrinsic_est)
 		{
-			int feats_down_size = feats_down_body->points.size();
+			int feats_down_size = feats_down_lidar->points.size();
 			laserCloudOri->clear();
 			corr_normvect->clear();
 
@@ -109,16 +109,16 @@ namespace esekfom
 
 			for (int i = 0; i < feats_down_size; i++) //遍历所有的特征点
 			{
-				PointType &point_body = feats_down_body->points[i];
+				PointType &point_lidar = feats_down_lidar->points[i];
 				PointType point_world;
 
-				V3D p_body(point_body.x, point_body.y, point_body.z);
+				V3D p_lidar(point_lidar.x, point_lidar.y, point_lidar.z);
 				//把Lidar坐标系的点先转到IMU坐标系，再根据前向传播估计的位姿x，转到世界坐标系
-				V3D p_global(x_.rot * (x_.offset_R_L_I * p_body + x_.offset_T_L_I) + x_.pos);
+				V3D p_global(x_.rot * (x_.offset_R_L_I * p_lidar + x_.offset_T_L_I) + x_.pos);
 				point_world.x = p_global(0);
 				point_world.y = p_global(1);
 				point_world.z = p_global(2);
-				point_world.intensity = point_body.intensity;
+				point_world.intensity = point_lidar.intensity;
 
 				vector<float> pointSearchSqDis(NUM_MATCH_POINTS);
 				auto &points_near = Nearest_Points[i]; // Nearest_Points[i]打印出来发现是按照离point_world距离，从小到大的顺序的vector
@@ -141,7 +141,7 @@ namespace esekfom
 				if (esti_plane(pabcd, points_near, 0.1f))
 				{
 					float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3); //当前点到平面的距离
-					float s = 1 - 0.9 * fabs(pd2) / sqrt(p_body.norm());												   //如果残差大于经验阈值，则认为该点是有效点  简言之，距离原点越近的lidar点  要求点到平面的距离越苛刻
+					float s = 1 - 0.9 * fabs(pd2) / sqrt(p_lidar.norm());												   //如果残差大于经验阈值，则认为该点是有效点  简言之，距离原点越近的lidar点  要求点到平面的距离越苛刻
 
 					if (s > 0.9) //如果残差大于阈值，则认为该点是有效点
 					{
@@ -159,7 +159,7 @@ namespace esekfom
 			{
 				if (point_selected_surf[i]) //对于满足要求的点
 				{
-					laserCloudOri->points[effct_feat_num] = feats_down_body->points[i]; //把这些点重新存到laserCloudOri中
+					laserCloudOri->points[effct_feat_num] = feats_down_lidar->points[i]; //把这些点重新存到laserCloudOri中
 					corr_normvect->points[effct_feat_num] = normvec->points[i];			//存储这些点对应的法向量和到平面的距离
 					effct_feat_num++;
 				}
@@ -227,10 +227,10 @@ namespace esekfom
 		}
 
 		// ESKF
-		void update_iterated_dyn_share_modified(double R, PointCloudXYZI::Ptr &feats_down_body,
+		void update_iterated_dyn_share_modified(double R, PointCloudXYZI::Ptr &feats_down_lidar,
 												KD_TREE &ikdtree, vector<PointVector> &Nearest_Points, int maximum_iter, bool extrinsic_est)
 		{
-			normvec->resize(int(feats_down_body->points.size()));
+			normvec->resize(int(feats_down_lidar->points.size()));
 
 			dyn_share_datastruct dyn_share;
 			dyn_share.valid = true;
@@ -245,7 +245,7 @@ namespace esekfom
 			{
 				dyn_share.valid = true;
 				// 计算雅克比，也就是点面残差的导数 H(代码里是h_x)
-				h_share_model(dyn_share, feats_down_body, ikdtree, Nearest_Points, extrinsic_est);
+				h_share_model(dyn_share, feats_down_lidar, ikdtree, Nearest_Points, extrinsic_est);
 
 				if (!dyn_share.valid)
 				{

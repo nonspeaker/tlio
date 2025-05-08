@@ -2,7 +2,7 @@
 #define IMU_PROCESSOR_H
 
 #include "common_lib.hpp"
-#include "esekfom.hpp"
+#include <ieskf/esekfom.hpp>
 
 #define MAX_INI_COUNT (10)  //IMU初始化时，需要的IMU数据帧数
 

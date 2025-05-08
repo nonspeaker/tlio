@@ -25,6 +25,16 @@ void LocalMapManager::setParams(float detRange, double filterSizeMapMin, float c
 
 }
 
+void LocalMapManager::pointLidarToIMU(const PointType &pi, PointType &po, const state_ikfom &state)
+{
+    Eigen::Vector3d p_lidar(pi.x, pi.y, pi.z);
+    Eigen::Vector3d p_IMU(state.offset_R_L_I.matrix() * p_lidar + state.offset_T_L_I);
+
+    po.x = p_IMU(0);
+    po.y = p_IMU(1);
+    po.z = p_IMU(2);
+    po.intensity = pi.intensity;
+}
 void LocalMapManager::pointLidarToWorld(const PointType &pi, PointType &po, const state_ikfom &state) 
 {
     Eigen::Vector3d p_lidar(pi.x, pi.y, pi.z);
@@ -35,7 +45,15 @@ void LocalMapManager::pointLidarToWorld(const PointType &pi, PointType &po, cons
     po.z = p_world(2);
     po.intensity = pi.intensity;
 }
+void LocalMapManager::transformToIMU(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state)
+{
+    int size = inputCloud->points.size();
+    outputCloud->resize(size);
+    #pragma omp parallel for
+    for(int i = 0; i < size; ++i)
+        pointLidarToIMU(inputCloud->points[i], outputCloud->points[i], state);
 
+}
 void LocalMapManager::transformToWorld(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state)
 {
     int size = inputCloud->points.size();

@@ -10,7 +10,7 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <livox_ros_driver2/CustomMsg.h>
 #include <ikd-Tree/ikd_Tree.h>
-#include "use-ikfom.hpp"
+#include <ieskf/use-ikfom.hpp>
 #include "common_lib.hpp"
 
 using namespace std;
@@ -25,6 +25,9 @@ public:
     void setParams(float detRange, double filterSizeMapMin, float cubeLen);
 
     void transformToWorld(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state);
+    void transformToIMU(const PointCloudXYZI::Ptr &inputCloud, PointCloudXYZI::Ptr &outputCloud, const state_ikfom &state);
+
+
 
     void updateLocalMapRange(const Eigen::Vector3d &lidarPosition, KD_TREE &ikdtree);
     void updateMapIncremental(const PointCloudXYZI::Ptr &featsDownLidar, KD_TREE &ikdtree, 
@@ -48,6 +51,7 @@ private:
     vector<BoxPointType> cubNeedRm;
 
     void pointLidarToWorld(const PointType &pi, PointType &po, const state_ikfom &state);
+    void pointLidarToIMU(const PointType &pi, PointType &po, const state_ikfom &state);
 };
 
 #endif 

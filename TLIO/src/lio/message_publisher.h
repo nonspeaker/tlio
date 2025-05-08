@@ -9,15 +9,15 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <tf/transform_broadcaster.h>
-#include "use-ikfom.hpp"
+#include <ieskf/use-ikfom.hpp>
 class MessagePublisher {
 public:
     MessagePublisher(ros::NodeHandle &nh);
     ~MessagePublisher();
     void publishOdometry(const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp);
-    void publishPointCloud(const PointCloudXYZI::Ptr &cloud, double timestamp);
+    void publishPointCloudIMU(const PointCloudXYZI::Ptr &cloud, double timestamp);
+    void publishPointCloudWorld(const PointCloudXYZI::Ptr &cloud, double timestamp);
     void publishPath(const state_ikfom& state, double timestamp);
-    void publishLoopConstraints(const visualization_msgs::MarkerArray &markerArray);
 
     void writeOdometryToFile(); // 添加一个方法用于将内存中的数据写入文件
 
@@ -27,10 +27,10 @@ private:
     nav_msgs::Odometry odometry;//建图后里程计的消息
 
     ros::Publisher pubOdometry;
+    ros::Publisher pubPointCloudIMU;
     ros::Publisher pubPointCloudWorld;
+    
     ros::Publisher pubPath;
-    ros::Publisher pubPathUpdate;
-    ros::Publisher pubLoopConstraintEdge;
 
     // 写出里程计信息到文件
     std::ofstream odom_file;
@@ -46,9 +46,8 @@ MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
 
     pubOdometry = nh.advertise<nav_msgs::Odometry>("/odometry", 100000);
     pubPointCloudWorld = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
+    pubPointCloudIMU = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_body", 100000);
     pubPath = nh.advertise<nav_msgs::Path>("/path", 100000);
-    pubPathUpdate = nh.advertise<nav_msgs::Path>("path_update", 100000);
-    pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("loop_closure_constraints", 1);
 
 
     // 打开文件并以覆盖模式写入表头
@@ -75,7 +74,7 @@ void MessagePublisher::publishOdometry(const state_ikfom& state, const Eigen::Ma
     static uint32_t seq = 0; // 静态变量，序列号从 0 开始
 
     odometry.header.frame_id = "camera_init";
-    odometry.child_frame_id = "lidar";
+    odometry.child_frame_id = "body";
     odometry.header.stamp = ros::Time().fromSec(timestamp); // ros::Time().fromSec(lidar_end_time);
     odometry.header.seq = seq++; // 每次调用递增序列号
 
@@ -113,19 +112,24 @@ void MessagePublisher::publishOdometry(const state_ikfom& state, const Eigen::Ma
     q.setY(odometry.pose.pose.orientation.y);
     q.setZ(odometry.pose.pose.orientation.z);
     transform.setRotation(q);
-    br.sendTransform(tf::StampedTransform(transform, odometry.header.stamp, "camera_init", "lidar"));
+    br.sendTransform(tf::StampedTransform(transform, odometry.header.stamp, "camera_init", "body"));
 
 }
 
-
-void MessagePublisher::publishPointCloud(const PointCloudXYZI::Ptr &cloud, double timestamp) {
+void MessagePublisher::publishPointCloudWorld(const PointCloudXYZI::Ptr &cloud, double timestamp) {
     sensor_msgs::PointCloud2 cloudMsg;
     pcl::toROSMsg(*cloud, cloudMsg);
     cloudMsg.header.stamp = ros::Time().fromSec(timestamp);
     cloudMsg.header.frame_id = "camera_init";
     pubPointCloudWorld.publish(cloudMsg);
 }
-
+void MessagePublisher::publishPointCloudIMU(const PointCloudXYZI::Ptr &cloud, double timestamp) {
+    sensor_msgs::PointCloud2 cloudMsg;
+    pcl::toROSMsg(*cloud, cloudMsg);
+    cloudMsg.header.stamp = ros::Time().fromSec(timestamp);
+    cloudMsg.header.frame_id = "body";
+    pubPointCloudIMU.publish(cloudMsg);
+}
 void MessagePublisher::publishPath(const state_ikfom& state, double timestamp) {
 
     geometry_msgs::PoseStamped poseStamped;
@@ -151,11 +155,6 @@ void MessagePublisher::publishPath(const state_ikfom& state, double timestamp) {
         pubPath.publish(path);
     }
 }
-
-void MessagePublisher::publishLoopConstraints(const visualization_msgs::MarkerArray &markerArray) {
-    pubLoopConstraintEdge.publish(markerArray);
-}
-
 
 void MessagePublisher::writeOdometryToFile() {
     if (odom_file.is_open()) {

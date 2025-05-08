@@ -24,7 +24,6 @@
 #include "imu_process.h"
 #include "pcl_process.h"
 #include "local_map.h"
-#include "optimization.h"
 #include "common_lib.hpp"
 #include "message_receiver.h"
 #include "message_publisher.h"
@@ -69,35 +68,6 @@ int pcd_save_interval = -1;
 float odometrySurfLeafSize = 0.4;
 float mappingCornerLeafSize = 0.2;
 float mappingSurfLeafSize = 0.4;
-// robot motion constraint (in case you are using a 2D robot)
-float z_tollerance = 1000;
-float rotation_tollerance = 1000;
-// CPU Params
-int numberOfCores = 4;
-double mappingProcessInterval = 0.15;
-// Surrounding map
-float surroundingkeyframeAddingDistThreshold = 1.0;
-float surroundingkeyframeAddingAngleThreshold = 0.2;  
-float surroundingKeyframeDensity = 2.0;              
-float surroundingKeyframeSearchRadius = 50.0;      
-// Loop closure
-bool loopClosureEnableFlag = true;                  
-float loopClosureFrequency = 4.0;                    
-int surroundingKeyframeSize = 50;                 
-float historyKeyframeSearchRadius = 1.5;            
-float historyKeyframeSearchTimeDiff = 30.0;           
-int historyKeyframeSearchNum = 20;               
-float historyKeyframeFitnessScore = 0.3;
-// Visualization
-float globalMapVisualizationSearchRadius = 1000.0;    
-float globalMapVisualizationPoseDensity = 10;     
-float globalMapVisualizationLeafSize = 1.0;       
-// visual iktree_map  
-bool visulize_IkdtreeMap = true;
-bool recontructKdTree = true;
-// Export settings
-bool savePCD = true;
-std::string savePCDDirectory;
 
 
 // launch file
@@ -114,13 +84,6 @@ double filter_publish_map = 0.5;
 
 
 condition_variable sig_buffer;
-
-//历史关键帧位置3D（xyz）
-pcl::PointCloud<PointType>::Ptr cloudKeyPoses3D(new pcl::PointCloud<PointType>());   
-//历史关键帧位姿6D（欧拉角+xyz）         
-pcl::PointCloud<PointTypePose>::Ptr cloudKeyPoses6D(new pcl::PointCloud<PointTypePose>()); 
-//历史关键帧的所有平面点集合(没有降采样)
-std::vector<pcl::PointCloud<PointType>::Ptr> surfCloudKeyFrames;    
 
 
 double lidar_end_time = 0.0;
@@ -139,11 +102,11 @@ Eigen::Vector3d lidar_position;//当前雷达位置
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());//当前帧去畸变后的点云
 PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云pcd_index
 
-PointCloudXYZI::Ptr feats_publish(new PointCloudXYZI());//发布出去的点云
+PointCloudXYZI::Ptr feats_world(new PointCloudXYZI()); // 世界坐标系的点云
+PointCloudXYZI::Ptr feats_imu(new PointCloudXYZI());   // IMU坐标系的点云
+
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());//保存的点云
 
-std::shared_ptr<GTSAMOptimizer> gtsamOptimizer(new GTSAMOptimizer(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
-std::shared_ptr<LoopClosure> loopClosure(new LoopClosure(state_point, cloudKeyPoses3D, cloudKeyPoses6D, surfCloudKeyFrames));
 std::shared_ptr<PointCloudProcessor> pclProcessor(new PointCloudProcessor());
 std::shared_ptr<ImuProcessor> imuProcessor(new ImuProcessor());
 std::shared_ptr<LocalMapManager> localMapManager(new LocalMapManager());
@@ -165,30 +128,9 @@ void SigHandle(int sig)
 }
 
 
-//回环检测线程
-void loopClosureThread(MessagePublisher &publisher)
-{
-    if (loopClosure->loopClosureEnableFlag == false)
-    {
-        std::cout << "loopClosureEnableFlag   ==  false " << endl;
-        return;
-    }
-
-    ros::Rate rate(loopClosureFrequency); //   回环频率
-    while (ros::ok())
-    {
-        rate.sleep();
-        loopClosure->setTimeStamp(lidar_end_time);
-        loopClosure->performLoopClosure();   //回环检测
-        loopClosure->generateLoopMarkers(markerArray, lidar_end_time);
-
-        publisher.publishLoopConstraints(markerArray);
-    }
-}
-
 void loadParameters(ros::NodeHandle& nh) {
 
-    nh.param<string>("common/lidar_topic", lidar_topic, "/livox/lidar");                    //雷达点云话题
+    nh.param<string>("common/lidar_topic", lidar_topic, "/livox/lidar");                //雷达点云话题
     nh.param<string>("common/imu_topic", imu_topic, "/livox/imu");                      //IMU话题
     nh.param<bool>("common/time_sync_en", time_sync_en, false);                         //是否开启时间同步
     nh.param<double>("common/time_offset_lidar_to_imu", time_offset_lidar_to_imu, 0.0); //雷达相对于IMU时间偏移
@@ -218,56 +160,19 @@ void loadParameters(ros::NodeHandle& nh) {
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);                          //点云保存间隔
 
 
-    nh.param<bool>("feature_extract_enable", feature_enabled, false);  //特征提取开关
-    nh.param<int>("point_filter_num", point_filter_num, 2);            //点云滤波器数量
-    nh.param<int>("max_iteration", max_iteration, 4);                                //最大迭代次数
-    nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);                 //平面点滤波器大小
-    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);                   //地图滤波大小
-    nh.param<double>("cube_side_length", cube_len, 200);                             //地图立方体边长
-    nh.param<bool>("runtime_pos_log_enable", runtime_pos_log_enable, 0);             //是否启用运行时位置日志
+    nh.param<bool>("feature_extract_enable", feature_enabled, false);                   //特征提取开关
+    nh.param<int>("point_filter_num", point_filter_num, 2);                             //点云滤波器数量
+    nh.param<int>("max_iteration", max_iteration, 4);                                   //最大迭代次数
+    nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);                    //平面点滤波器大小
+    nh.param<double>("filter_size_map", filter_size_map_min, 0.5);                      //地图滤波大小
+    nh.param<double>("cube_side_length", cube_len, 200);                                //地图立方体边长
+    nh.param<bool>("runtime_pos_log_enable", runtime_pos_log_enable, 0);                //是否启用运行时位置日志
 
-    nh.param<double>("filter_publish_map", filter_publish_map, 0.5);                 //发布点云大小
-
-    //voxel filter paprams
-    //nh.param<float>("odometrySurfLeafSize", odometrySurfLeafSize, 0.2);                 //odometry滤波器大小 
-    //nh.param<float>("mappingCornerLeafSize", mappingCornerLeafSize, 0.2);               //mapping角点滤波器大小
-    //nh.param<float>("mappingSurfLeafSize", mappingSurfLeafSize, 0.2);                   //mapping平面点滤波器大小
-    //robot motion constraint (in case you are using a 2D robot)
-    nh.param<float>("z_tollerance", z_tollerance, FLT_MAX);                             //z轴容差
-    nh.param<float>("rotation_tollerance", rotation_tollerance, FLT_MAX);               //旋转容差
-    //CPU Params
-    nh.param<int>("numberOfCores", numberOfCores, 2);                                   //CPU核心数
-    nh.param<double>("mappingProcessInterval", mappingProcessInterval, 0.15);           //建图处理间隔
-    //Surrounding map
-    nh.param<float>("surroundingkeyframeAddingDistThreshold", surroundingkeyframeAddingDistThreshold, 20.0);    //添加关键帧的距离阈值
-    nh.param<float>("surroundingkeyframeAddingAngleThreshold", surroundingkeyframeAddingAngleThreshold, 0.2);   //添加关键帧的角度阈值
-    //nh.param<float>("surroundingKeyframeDensity", surroundingKeyframeDensity, 1.0);                             //关键帧的稀疏程度
-    //nh.param<float>("surroundingKeyframeSearchRadius", surroundingKeyframeSearchRadius, 50.0);                  //搜索周围关键帧的半径
-    // loop clousre
-    nh.param<bool>("loopClosureEnableFlag", loopClosureEnableFlag, false);                   //回环检测使能
-    nh.param<float>("loopClosureFrequency", loopClosureFrequency, 1.0);                      //回环检测频率
-    nh.param<int>("surroundingKeyframeSize", surroundingKeyframeSize, 50);                   //搜索关键帧的数量
-    nh.param<float>("historyKeyframeSearchRadius", historyKeyframeSearchRadius, 10.0);       //历史关键帧搜索半径
-    nh.param<float>("historyKeyframeSearchTimeDiff", historyKeyframeSearchTimeDiff, 30.0);   //历史关键帧搜索时间差
-    nh.param<int>("historyKeyframeSearchNum", historyKeyframeSearchNum, 25);                 //历史关键帧搜索数量
-    nh.param<float>("historyKeyframeFitnessScore", historyKeyframeFitnessScore, 0.3);        //历史关键帧拟合分数
-    // Visualization
-    nh.param<float>("globalMapVisualizationSearchRadius", globalMapVisualizationSearchRadius, 1e3); //全局地图可视化搜索半径
-    nh.param<float>("globalMapVisualizationPoseDensity", globalMapVisualizationPoseDensity, 10.0);  //全局地图可视化点密度
-    nh.param<float>("globalMapVisualizationLeafSize", globalMapVisualizationLeafSize, 1.0);         //全局地图可视化体素滤波器大小
-    // visual ikdtree map
-    nh.param<bool>("visulize_IkdtreeMap", visulize_IkdtreeMap, false);               //是否可视化ikdtree地图
-    // reconstruct ikdtree  
-    nh.param<bool>("recontructKdTree", recontructKdTree, false);                     //是否重建ikdtree
-    // savMap
-    nh.param<bool>("savePCD", savePCD, false);                                       //是否保存点云
-    nh.param<std::string>("savePCDDirectory", savePCDDirectory, "/Downloads/LOAM/"); //保存点云目录0
+    nh.param<double>("filter_publish_map", filter_publish_map, 0.5);                    //发布点云大小
 
 }
 void initializeProcessors() {
 
-    loopClosure->setParams(loopClosureEnableFlag, loopClosureFrequency, historyKeyframeSearchRadius, historyKeyframeSearchTimeDiff, historyKeyframeSearchNum, historyKeyframeFitnessScore);
-    gtsamOptimizer->setParams(recontructKdTree, surroundingkeyframeAddingDistThreshold, surroundingkeyframeAddingAngleThreshold, globalMapVisualizationSearchRadius, globalMapVisualizationPoseDensity, globalMapVisualizationLeafSize);
     pclProcessor->setParams(lidar_type, scan_line, scan_rate, time_unit, blind, feature_enabled, point_filter_num);
     localMapManager->setParams(det_range, filter_size_map_min, cube_len);
 
@@ -302,9 +207,6 @@ int main(int argc, char** argv)
     MessageReceiver* receiver = new MessageReceiver(nh, lidar_topic, imu_topic, pclProcessor);
 
     receiver->setParameters(time_sync_en, time_offset_lidar_to_imu);
- 
-    // 回环检测线程
-    std::thread loopthread(loopClosureThread, std::ref(*publisher));
     while(ros::ok())
     {
 
@@ -342,9 +244,14 @@ int main(int argc, char** argv)
             is_ekf_init = (Measures.lidar_beg_time - first_lidar_time) < INIT_TIME ? false : true;
             //根据lidar在世界坐标系下的位置，重新确定局部地图范围，移除距离远的点。
             localMapManager->updateLocalMapRange(lidar_position, ikdtree);
+
+
+
             //下采样得到当前帧的点云
             pclProcessor->downsamplePointCloud(feats_undistort, feats_down_lidar, filter_size_surf_min);
             feats_down_size = feats_down_lidar->points.size();
+
+
             //当前帧点云数量少，则警告
             if (feats_down_size < 5)
             {
@@ -362,13 +269,6 @@ int main(int argc, char** argv)
             Nearest_Points.resize(feats_down_size); //存储近邻点的vector
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, feats_down_lidar, ikdtree, Nearest_Points, max_iteration, extrinsic_est_en);
 
-            //更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree
-            state_point = kf.get_x();
-            Eigen::Vector3d eulerAngle = state_point.rot.matrix().eulerAngles(2,1,0); 
-            gtsamOptimizer->setInitialPose(eulerAngle,state_point.pos, lidar_end_time);
-            gtsamOptimizer->optimize(kf, ikdtree, feats_undistort, globalPath, loopClosure);
- 
-
             //发布里程计信息
             state_point = kf.get_x();
             P = kf.get_P();
@@ -381,14 +281,16 @@ int main(int argc, char** argv)
             localMapManager->updateMapIncremental(feats_down_lidar, ikdtree, Nearest_Points, state_point, is_ekf_init);
 
             //发布点云
-            localMapManager->transformToWorld(feats_undistort, feats_publish, state_point);
-            //pclProcessor->downsamplePointCloud(feats_publish, feats_publish, filter_publish_map);
+            //发布IMU坐标系下的点云
+            localMapManager->transformToIMU(feats_undistort, feats_imu, state_point);
+            publisher->publishPointCloudIMU(feats_imu, lidar_end_time);
+            //发布世界坐标系下的点云
+            localMapManager->transformToWorld(feats_undistort, feats_world, state_point);
+            pclProcessor->downsamplePointCloud(feats_world, feats_world, filter_publish_map);
+            publisher->publishPointCloudWorld(feats_world, lidar_end_time);
+
             //增量保存全部点云
-            *pcl_wait_save += *feats_publish;
-
-
-            publisher->publishPointCloud(feats_publish, lidar_end_time);
-
+            *pcl_wait_save += *feats_world;
         }
         rate.sleep();
     }
@@ -397,9 +299,11 @@ int main(int argc, char** argv)
     publisher->writeOdometryToFile();
 
     //保存点云
-    std::string savePath(string(string(ROOT_DIR) + "PCD/scans") + string(".pcd"));
-    localMapManager->savePointCloud(pcl_wait_save, savePath);
-
+    if(pcd_save_en)
+    {
+        std::string savePath(string(string(ROOT_DIR) + "PCD/scans") + string(".pcd"));
+        localMapManager->savePointCloud(pcl_wait_save, savePath);
+    }
 
 
     return 0;

@@ -15,6 +15,7 @@
 
 	<param name="filter_publish_map" type="double" value="0.5" />
     <node pkg="tlio" type="tlio" name="tlio" output="screen" /> 
+
     <group if="$(arg rviz)">
         <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find tlio)/rviz_cfg/ntuviral.rviz" />
     </group>
