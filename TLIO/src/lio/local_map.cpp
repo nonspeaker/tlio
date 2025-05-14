@@ -187,3 +187,12 @@ void LocalMapManager::updateMapIncremental(const PointCloudXYZI::Ptr &featsDownL
     ikdtree.Add_Points(pointNoNeedDownsample, false);
 }
 
+void LocalMapManager::getKDTreePoints(const PointCloudXYZI::Ptr &featsLocalMap, KD_TREE &ikdtree)
+{
+    PointVector().swap(ikdtree.PCL_Storage);
+    ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
+    featsLocalMap->clear();
+    featsLocalMap->points = ikdtree.PCL_Storage;
+}
+
+

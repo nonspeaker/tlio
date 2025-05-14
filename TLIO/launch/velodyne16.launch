@@ -20,6 +20,6 @@
     <node pkg="tlio" type="optimize_node" name="optimize_node" output="screen" />
 
     <group if="$(arg rviz)">
-      <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find tlio)/rviz_cfg/ntuviral.rviz" />
+      <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find tlio)/rviz_cfg/loam_livox.rviz" />
     </group>
 </launch>

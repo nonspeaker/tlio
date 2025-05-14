@@ -35,6 +35,8 @@ public:
     void initializeKdTree(KD_TREE &ikdtree, const PointCloudXYZI::Ptr &featsDownLidar, const state_ikfom &state);
     void savePointCloud(const pcl::PointCloud<PointType>::Ptr& cloud, const std::string& filename);
 
+
+    void getKDTreePoints(const PointCloudXYZI::Ptr &featsLocalMap, KD_TREE &ikdtree);
 private:
 
 

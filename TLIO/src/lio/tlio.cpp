@@ -19,7 +19,8 @@
 #include <pcl/common/transforms.h>
 #include <pcl/filters/filter.h>
 #include <pcl_conversions/pcl_conversions.h>
-
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/radius_outlier_removal.h>
 // 自定义头文件
 #include "imu_process.h"
 #include "pcl_process.h"
@@ -99,11 +100,13 @@ state_ikfom state_point;//当前状态
 Eigen::Matrix<double, 24, 24>  P; //协方差矩阵
 Eigen::Vector3d lidar_position;//当前雷达位置
 
-PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());//当前帧去畸变后的点云
-PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI());//当前帧去畸变后的点云下采样后的点云pcd_index
 
-PointCloudXYZI::Ptr feats_world(new PointCloudXYZI()); // 世界坐标系的点云
-PointCloudXYZI::Ptr feats_imu(new PointCloudXYZI());   // IMU坐标系的点云
+PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());  //当前帧去畸变后的点云
+PointCloudXYZI::Ptr feats_down_lidar(new PointCloudXYZI()); //当前帧去畸变后的点云下采样后的点云pcd_index
+
+PointCloudXYZI::Ptr feats_localmap(new PointCloudXYZI());   //kd树的点云
+PointCloudXYZI::Ptr feats_world(new PointCloudXYZI());      //世界坐标系的点云
+PointCloudXYZI::Ptr feats_imu(new PointCloudXYZI());        //IMU坐标系的点云
 
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());//保存的点云
 
@@ -223,8 +226,7 @@ int main(int argc, char** argv)
                 continue;
             }       
 
-            //std::cout << "feats_raw_size: " << Measures.lidar->points.size()  << std::endl;
-            
+
             //点云去运动畸变，反向传播
             imuProcessor->process(Measures, kf, feats_undistort);
             int feats_undistort_size = feats_undistort->points.size();
@@ -245,8 +247,6 @@ int main(int argc, char** argv)
             //根据lidar在世界坐标系下的位置，重新确定局部地图范围，移除距离远的点。
             localMapManager->updateLocalMapRange(lidar_position, ikdtree);
 
-
-
             //下采样得到当前帧的点云
             pclProcessor->downsamplePointCloud(feats_undistort, feats_down_lidar, filter_size_surf_min);
             feats_down_size = feats_down_lidar->points.size();
@@ -265,6 +265,10 @@ int main(int argc, char** argv)
                 continue;
             }
 
+            // 发布kd树点云
+            localMapManager->getKDTreePoints(feats_localmap, ikdtree);
+            publisher->publishPointCloudLocalMap(feats_localmap, lidar_end_time);
+
             //迭代状态估计
             Nearest_Points.resize(feats_down_size); //存储近邻点的vector
             kf.update_iterated_dyn_share_modified(LASER_POINT_COV, feats_down_lidar, ikdtree, Nearest_Points, max_iteration, extrinsic_est_en);
@@ -280,10 +284,13 @@ int main(int argc, char** argv)
             //向地图k-d树里添加点云
             localMapManager->updateMapIncremental(feats_down_lidar, ikdtree, Nearest_Points, state_point, is_ekf_init);
 
+
             //发布点云
+            //publisher->publishPointCloudOrigin(feats_origin, lidar_end_time);
+
             //发布IMU坐标系下的点云
-            localMapManager->transformToIMU(feats_undistort, feats_imu, state_point);
-            publisher->publishPointCloudIMU(feats_imu, lidar_end_time);
+            //localMapManager->transformToIMU(feats_undistort, feats_imu, state_point);
+            //publisher->publishPointCloudIMU(feats_imu, lidar_end_time);
             //发布世界坐标系下的点云
             localMapManager->transformToWorld(feats_undistort, feats_world, state_point);
             pclProcessor->downsamplePointCloud(feats_world, feats_world, filter_publish_map);

@@ -13,17 +13,13 @@ std::mutex laser_mtx, odom_mtx;
 std::queue<sensor_msgs::PointCloud2::ConstPtr> laser_buffer;
 std::queue<nav_msgs::Odometry::ConstPtr> odom_buffer;
 
-std::vector<pair<int, int>> loopIndexQueue; //闭环队列
-std::vector<gtsam::Pose3> loopPoseQueue;    //闭环位姿变换队列
-std::vector<gtsam::noiseModel::Diagonal::shared_ptr> loopNoiseQueue;//闭环噪声队列
 
-
+std::map<int, int> loopIndexContainer;                                     // 闭环索引容器
 pcl::PointCloud<PointType>::Ptr keyFramePositions3D(new pcl::PointCloud<PointType>()); // 所有关键帧的3D位置信息
 pcl::PointCloud<PointTypePose>::Ptr keyFramePoses6D(new pcl::PointCloud<PointTypePose>()); // 所有关键帧的6D位姿（位置+姿态+时间戳）
 std::vector<PointCloudXYZI::Ptr> keyCloudVector;                           // 所有关键帧的点云
 
 std::ofstream keyframe_file;
-
 
 void laserCloudHandler(const sensor_msgs::PointCloud2::ConstPtr &msg) {
     std::lock_guard<std::mutex> lock(laser_mtx);
@@ -110,6 +106,68 @@ void publishCorrectedPath(ros::Publisher &pubCorrectPath) {
     pubCorrectPath.publish(correctedPath);
 }
 
+void visualizeLoopClosures(ros::Publisher &pubLoopMarkers) {
+
+    if(loopIndexContainer.empty())
+        return;
+    std::string odometryFrame = "camera_init";
+
+    visualization_msgs::MarkerArray markerArray;
+    // 闭环顶点
+    visualization_msgs::Marker markerNode;
+    markerNode.header.frame_id = odometryFrame;
+    markerNode.action = visualization_msgs::Marker::ADD;
+    markerNode.type = visualization_msgs::Marker::SPHERE_LIST;
+    markerNode.ns = "loop_nodes";
+    markerNode.id = 0;
+    markerNode.pose.orientation.w = 1;
+    markerNode.scale.x = 0.3;
+    markerNode.scale.y = 0.3;
+    markerNode.scale.z = 0.3;
+    markerNode.color.r = 0;
+    markerNode.color.g = 0.8;
+    markerNode.color.b = 1;
+    markerNode.color.a = 1;
+
+    // 闭环边
+    visualization_msgs::Marker markerEdge;
+    markerEdge.header.frame_id = odometryFrame;
+    markerEdge.action = visualization_msgs::Marker::ADD;
+    markerEdge.type = visualization_msgs::Marker::LINE_LIST;
+    markerEdge.ns = "loop_edges";
+    markerEdge.id = 1;
+    markerEdge.pose.orientation.w = 1;
+    markerEdge.scale.x = 0.1;
+    markerEdge.color.r = 0.9;
+    markerEdge.color.g = 0.9;
+    markerEdge.color.b = 0;
+    markerEdge.color.a = 1;
+
+    // 遍历闭环
+    for (auto it = loopIndexContainer.begin(); it != loopIndexContainer.end(); ++it) {
+        int key_cur = it->first;
+        int key_pre = it->second;
+
+        geometry_msgs::Point p;
+        p.x = keyFramePoses6D->points[key_cur].x;
+        p.y = keyFramePoses6D->points[key_cur].y;
+        p.z = keyFramePoses6D->points[key_cur].z;
+        markerNode.points.push_back(p);
+        markerEdge.points.push_back(p);
+
+        p.x = keyFramePoses6D->points[key_pre].x;
+        p.y = keyFramePoses6D->points[key_pre].y;
+        p.z = keyFramePoses6D->points[key_pre].z;
+        markerNode.points.push_back(p);
+        markerEdge.points.push_back(p);
+    }
+
+    markerArray.markers.push_back(markerNode);
+    markerArray.markers.push_back(markerEdge);   
+
+    pubLoopMarkers.publish(markerArray);
+}
+
 int main(int argc, char **argv) {
     ros::init(argc, argv, "online_demo");
     ros::NodeHandle nh;
@@ -117,7 +175,7 @@ int main(int argc, char **argv) {
     Config config;
     config.loadParamsFromROS(nh);
 
-    RadiusManager radiusManager(config.historyKeyframeSearchRadius, config.historyKeyframeSearchTimeDiff, config.historyKeyframeSearchNum, config.historyKeyframeFitnessScore,
+    RadiusManager radiusManager(config.historyKeyframeSearchRadius, config.historyKeyframeSearchTimeDiff, config.historyKeyframeSearchNum, 
         keyFramePositions3D, keyFramePoses6D, keyCloudVector);
 
     OptimizationManager optimizer(config.surroundingkeyframeAddingDistThreshold, config.surroundingkeyframeAddingAngleThreshold, 
@@ -145,7 +203,7 @@ int main(int argc, char **argv) {
 
     }
 
-    radiusManager.startLoopDetectionThread(loopIndexQueue, loopPoseQueue, loopNoiseQueue, pubLoopMarkers);
+
     bool has_loop_flag = false;
     while (ros::ok()) {
         ros::spinOnce();
@@ -159,6 +217,7 @@ int main(int argc, char **argv) {
             continue;
         }
 
+
         if(optimizer.isKeyFrame(current_pose)) {
             // 添加当前帧
             current_position.x = current_pose.x;
@@ -170,14 +229,36 @@ int main(int argc, char **argv) {
             keyCloudVector.push_back(current_cloud_body);
             
             optimizer.addOdomFactor(current_pose);
-            optimizer.addLoopFactor(loopIndexQueue, loopPoseQueue, loopNoiseQueue);
+
+            int loopKeyCur = keyFramePoses6D->size() - 1;
+            int loopKeyPre = -1;
+            PointCloudXYZI::Ptr nearKeyframeCloud(new PointCloudXYZI());
+
+            if(radiusManager.detectLoopAndGetICPClouds(loopKeyCur, loopKeyPre, nearKeyframeCloud)) 
+            {
+                Eigen::Matrix4f correction;
+                current_cloud_world = transformPointCloud(current_cloud_body, current_pose);
+                if(optimizer.icpAlign(current_cloud_world, nearKeyframeCloud, correction)) {
+            
+                    has_loop_flag = true;
+                    std::cout << "ICP align clouds success." << std::endl;
+                    // 保存闭环节点
+                    loopIndexContainer[loopKeyCur] = loopKeyPre;
+                    // 添加闭环因子
+                    optimizer.addLoopFactor(loopKeyCur, loopKeyPre, correction);
+                }
+                else {
+                    std::cout << "ICP align clouds fail." << std::endl;
+                }
+            }
 
             // 执行优化，得到优化后的值
-            optimizer.optimize();
+            optimizer.optimize(has_loop_flag);
 
             // 发布优化后的路径
-            publishCorrectedPath(pubCorrectPath);
-
+            //publishCorrectedPath(pubCorrectPath);
+            // 可视化闭环
+            visualizeLoopClosures(pubLoopMarkers);
 
             // 发布因子图优化后的点云
             PointTypePose &latestPose = keyFramePoses6D->points.back();
@@ -241,7 +322,6 @@ int main(int argc, char **argv) {
             odom.pose.pose.orientation.y = q.y();
             odom.pose.pose.orientation.z = q.z();
             odom.pose.pose.orientation.w = q.w();
-
             pubCorrectOdom.publish(odom);
 
 

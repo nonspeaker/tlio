@@ -15,8 +15,11 @@ public:
     MessagePublisher(ros::NodeHandle &nh);
     ~MessagePublisher();
     void publishOdometry(const state_ikfom& state, const Eigen::Matrix<double, 24, 24> & P, double timestamp);
+
+    void publishPointCloudOrigin(const PointCloudXYZI::Ptr &cloud, double timestamp);
     void publishPointCloudIMU(const PointCloudXYZI::Ptr &cloud, double timestamp);
     void publishPointCloudWorld(const PointCloudXYZI::Ptr &cloud, double timestamp);
+    void publishPointCloudLocalMap(const PointCloudXYZI::Ptr &cloud, double timestamp);
     void publishPath(const state_ikfom& state, double timestamp);
 
     void writeOdometryToFile(); // 添加一个方法用于将内存中的数据写入文件
@@ -27,6 +30,8 @@ private:
     nav_msgs::Odometry odometry;//建图后里程计的消息
 
     ros::Publisher pubOdometry;
+    ros::Publisher pubPointCloudOrigin;
+    ros::Publisher pubPointCloudLocalMap;
     ros::Publisher pubPointCloudIMU;
     ros::Publisher pubPointCloudWorld;
     
@@ -45,6 +50,8 @@ MessagePublisher::MessagePublisher(ros::NodeHandle &nh) {
     path.header.frame_id = "camera_init";
 
     pubOdometry = nh.advertise<nav_msgs::Odometry>("/odometry", 100000);
+    pubPointCloudOrigin = nh.advertise<sensor_msgs::PointCloud2>("/cloud_origin", 100000);
+    pubPointCloudLocalMap = nh.advertise<sensor_msgs::PointCloud2>("/cloud_local_map", 100000);
     pubPointCloudWorld = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered", 100000);
     pubPointCloudIMU = nh.advertise<sensor_msgs::PointCloud2>("/cloud_registered_body", 100000);
     pubPath = nh.advertise<nav_msgs::Path>("/path", 100000);
@@ -115,6 +122,25 @@ void MessagePublisher::publishOdometry(const state_ikfom& state, const Eigen::Ma
     br.sendTransform(tf::StampedTransform(transform, odometry.header.stamp, "camera_init", "body"));
 
 }
+
+
+void MessagePublisher::publishPointCloudOrigin(const PointCloudXYZI::Ptr &cloud, double timestamp) {
+
+    sensor_msgs::PointCloud2 cloudMsg;
+    pcl::toROSMsg(*cloud, cloudMsg);
+    cloudMsg.header.stamp = ros::Time().fromSec(timestamp);
+    cloudMsg.header.frame_id = "camera_init";
+    pubPointCloudOrigin.publish(cloudMsg);
+}
+
+void MessagePublisher::publishPointCloudLocalMap(const PointCloudXYZI::Ptr &cloud, double timestamp) {
+    sensor_msgs::PointCloud2 cloudMsg;
+    pcl::toROSMsg(*cloud, cloudMsg);
+    cloudMsg.header.stamp = ros::Time().fromSec(timestamp);
+    cloudMsg.header.frame_id = "camera_init";
+    pubPointCloudLocalMap.publish(cloudMsg);
+}
+
 
 void MessagePublisher::publishPointCloudWorld(const PointCloudXYZI::Ptr &cloud, double timestamp) {
     sensor_msgs::PointCloud2 cloudMsg;

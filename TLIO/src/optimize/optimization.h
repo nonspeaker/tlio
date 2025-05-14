@@ -1,6 +1,4 @@
 #pragma once
-
-
 #include "params.h"
 #include "loopclosure/common.h"
 
@@ -9,8 +7,7 @@ class OptimizationManager {
     public:
         OptimizationManager(float distThresh, float angleThresh, float fitnessScore,
                 pcl::PointCloud<PointType>::Ptr &keyPos3D, pcl::PointCloud<PointTypePose>::Ptr &keyPos6D, std::vector<PointCloudXYZI::Ptr> &keyClouds)
-            : surroundingKeyframeAddingDistThreshold(distThresh), surroundingKeyframeAddingAngleThreshold(angleThresh),
-            historyKeyframeFitnessScore(fitnessScore), keyFramePositions3D(keyPos3D), keyFramePoses6D(keyPos6D), keyCloudVector(keyClouds) 
+            : surroundingKeyframeAddingDistThreshold(distThresh), surroundingKeyframeAddingAngleThreshold(angleThresh), keyFramePositions3D(keyPos3D), keyFramePoses6D(keyPos6D), keyCloudVector(keyClouds) 
         {
             // 初始化 GTSAM 优化器
             gtsam::ISAM2Params parameters;
@@ -53,28 +50,7 @@ class OptimizationManager {
                      sqrt(x * x + y * y + z * z) < surroundingKeyframeAddingDistThreshold);
         }
     
-        bool icpAlign(const PointCloudXYZI::Ptr& src, const PointCloudXYZI::Ptr& tgt, Eigen::Matrix4f& out_transform) {
-            pcl::IterativeClosestPoint<PointType, PointType> icp;
-            icp.setMaxCorrespondenceDistance(150);
-            icp.setMaximumIterations(100);
-            icp.setTransformationEpsilon(1e-6);
-            icp.setEuclideanFitnessEpsilon(1e-6);
-            icp.setRANSACIterations(0);
-        
-            icp.setInputSource(src);
-            icp.setInputTarget(tgt);
-        
-            PointCloudXYZI::Ptr result(new PointCloudXYZI());
-            icp.align(*result);
-        
-            if (!icp.hasConverged() || icp.getFitnessScore() > historyKeyframeFitnessScore) {
-                return false;
-            } else {
-                out_transform = icp.getFinalTransformation();
-                return true;
-            }
-        }
-
+        // 添加里程计因子
         void addOdomFactor(const PointTypePose &current_pose) {
 
             int cloudInd = keyFramePositions3D->size() - 1;
@@ -96,26 +72,34 @@ class OptimizationManager {
                 initial.insert(cloudInd, pclPointTogtsamPose3(current_pose));
             }
         }
-
-        void addLoopFactor(int loopKeyCur, int loopKeyPre, const Eigen::Matrix4f& correction) {
-            // 当前关键帧的原始位姿
-            Eigen::Affine3f tWrong = pclPointToAffine3f(keyFramePoses6D->points[loopKeyCur]);
-            // 校正后的位姿
-            Eigen::Affine3f tCorrect = Eigen::Affine3f(correction) * tWrong;
-        
-            float x, y, z, roll, pitch, yaw;
-            pcl::getTranslationAndEulerAngles(tCorrect, x, y, z, roll, pitch, yaw);
-            gtsam::Pose3 poseFrom = gtsam::Pose3(gtsam::Rot3::RzRyRx(roll, pitch, yaw), gtsam::Point3(x, y, z));
-            gtsam::Pose3 poseTo = pclPointTogtsamPose3(keyFramePoses6D->points[loopKeyPre]);
-        
-            // 添加回环因子
-            graph.add(gtsam::BetweenFactor<gtsam::Pose3>(
-                loopKeyCur, loopKeyPre, poseFrom.between(poseTo), robustLoopNoise));
-        }
-
-        void optimize(bool has_loop_flag) 
+        //添加闭环因子
+        void addLoopFactor(std::vector<pair<int, int>> &loopIndexQueue,
+            std::vector<gtsam::Pose3> &loopPoseQueue,
+            std::vector<gtsam::noiseModel::Diagonal::shared_ptr> &loopNoiseQueue)
         {
+            if (loopIndexQueue.empty())
+            return;
 
+            //闭环队列
+            for (int i = 0; i < (int)loopIndexQueue.size(); ++i)
+            {
+                //闭环边对应两帧的索引
+                int indexFrom = loopIndexQueue[i].first; //当前帧
+                int indexTo = loopIndexQueue[i].second;  //之前的帧
+                //闭环边的位姿变换
+                gtsam::Pose3 poseBetween = loopPoseQueue[i];
+                gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i];
+                graph.add(gtsam::BetweenFactor<gtsam::Pose3>(indexFrom, indexTo, poseBetween, noiseBetween));
+            }
+
+            loopIndexQueue.clear();
+            loopPoseQueue.clear();
+            loopNoiseQueue.clear();
+            has_loop_flag = true;
+    }
+
+        void optimize() 
+        {
             isam.update(graph, initial);
             isam.update();
             // 如果有回环，进行多次更新以提高收敛性
@@ -131,25 +115,43 @@ class OptimizationManager {
             initial.clear();
 
             gtsam::Values isamCurrentEstimate = isam.calculateEstimate();
-            for (int i = 0; i < isamCurrentEstimate.size(); ++i) {
-                keyFramePositions3D->points[i].x = isamCurrentEstimate.at<gtsam::Pose3>(i).translation().x();
-                keyFramePositions3D->points[i].y = isamCurrentEstimate.at<gtsam::Pose3>(i).translation().y();
-                keyFramePositions3D->points[i].z = isamCurrentEstimate.at<gtsam::Pose3>(i).translation().z();
-    
-                keyFramePoses6D->points[i].x = keyFramePositions3D->points[i].x;
-                keyFramePoses6D->points[i].y = keyFramePositions3D->points[i].y;
-                keyFramePoses6D->points[i].z = keyFramePositions3D->points[i].z;
-                keyFramePoses6D->points[i].roll = isamCurrentEstimate.at<gtsam::Pose3>(i).rotation().roll();
-                keyFramePoses6D->points[i].pitch = isamCurrentEstimate.at<gtsam::Pose3>(i).rotation().pitch();
-                keyFramePoses6D->points[i].yaw = isamCurrentEstimate.at<gtsam::Pose3>(i).rotation().yaw();
+            keyFramePositions3D->back().x = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size() - 1).translation().x();
+            keyFramePositions3D->back().y = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size() - 1).translation().y();
+            keyFramePositions3D->back().z = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size() - 1).translation().z();
+
+            keyFramePoses6D->back().x = keyFramePositions3D->back().x;
+            keyFramePoses6D->back().y = keyFramePositions3D->back().y;
+            keyFramePoses6D->back().z = keyFramePositions3D->back().z;
+            keyFramePoses6D->back().roll = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size() - 1).rotation().roll();
+            keyFramePoses6D->back().pitch = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size() - 1).rotation().pitch();
+            keyFramePoses6D->back().yaw = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size() - 1).rotation().yaw();
+
+            if(has_loop_flag)
+            {
+                for (int i = 0; i < isamCurrentEstimate.size(); ++i) {
+                    keyFramePositions3D->points[i].x = isamCurrentEstimate.at<gtsam::Pose3>(i).translation().x();
+                    keyFramePositions3D->points[i].y = isamCurrentEstimate.at<gtsam::Pose3>(i).translation().y();
+                    keyFramePositions3D->points[i].z = isamCurrentEstimate.at<gtsam::Pose3>(i).translation().z();
+        
+                    keyFramePoses6D->points[i].x = keyFramePositions3D->points[i].x;
+                    keyFramePoses6D->points[i].y = keyFramePositions3D->points[i].y;
+                    keyFramePoses6D->points[i].z = keyFramePositions3D->points[i].z;
+                    keyFramePoses6D->points[i].roll = isamCurrentEstimate.at<gtsam::Pose3>(i).rotation().roll();
+                    keyFramePoses6D->points[i].pitch = isamCurrentEstimate.at<gtsam::Pose3>(i).rotation().pitch();
+                    keyFramePoses6D->points[i].yaw = isamCurrentEstimate.at<gtsam::Pose3>(i).rotation().yaw();
+                }
             }
 
+            has_loop_flag = false;
         }
 
     private:
+
+        bool has_loop_flag = false;
+
         float surroundingKeyframeAddingDistThreshold;
         float surroundingKeyframeAddingAngleThreshold;
-        float historyKeyframeFitnessScore;
+ 
 
         pcl::PointCloud<PointType>::Ptr& keyFramePositions3D;
         pcl::PointCloud<PointTypePose>::Ptr& keyFramePoses6D;
